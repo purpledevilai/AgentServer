@@ -3,6 +3,9 @@ from typing import Optional
 from lib.webrtc.Room import Room
 from lib.webrtc.Peer import Peer
 from lib.webrtc.SyntheticAudioTrack import SyntheticAudioTrack
+from lib.vad import vad
+from models.SpeechToText import SpeechToText
+from models.DeepgramSTT import DeepgramSTT
 
 
 class ConversationOrchestrator:
@@ -12,6 +15,7 @@ class ConversationOrchestrator:
         self.context_id = context_id
         self.room: Optional[Room] = None
         self.agent: Optional[object] = None
+        self.peer_to_stt: dict[str, DeepgramSTT] = {}
         
     # Initialize
     async def initialize(self):
@@ -28,6 +32,22 @@ class ConversationOrchestrator:
     
     # Create Peer for Description - Callback used by the Room
     def on_create_peer(self, peer_id: str, self_description: str):
+        # Create a SpeechToText instance for the peer
+        # stt =  SpeechToText(
+        #     on_speech_detected=lambda text: print(f"Transcription for {peer_id}: {text}"),
+        #     silence_duration_ms=1000,
+        # )
+
+        stt = DeepgramSTT(
+            sample_rate=48000,
+            on_text=lambda text: print(f"Transcription for {peer_id}: {text}"),
+            vad_threshold=0.0001,
+            silence_duration_ms=1000,
+        )
+
+        # Add to list
+        self.peer_to_stt[peer_id] = stt
+
         # Create a new peer
         return Peer(
             peer_id=peer_id,
@@ -39,9 +59,13 @@ class ConversationOrchestrator:
         )
     
     # On Audio Data - Callback used by the Peers
-    def on_audio_data(peer_id: str, data):
-        print("recieved audio data")
-        pass
+    def on_audio_data(self, peer_id, audio_data, sample_rate):
+        # Get peer's SpeechToText instance
+        stt = self.peer_to_stt[peer_id]
+
+        # Add audio data to the SpeechToText instance
+        stt.add_audio_data(audio_data=audio_data)
+    
 
     # On Message - Callback used by the Peers
     def on_message(peer_id: str, message: str):

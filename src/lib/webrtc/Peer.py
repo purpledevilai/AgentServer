@@ -19,14 +19,13 @@ class Peer:
             self_description: str,
             create_data_channel: bool = False,
             tracks: List[MediaStreamTrack] = [],
-            on_audio_data: Callable[[str, bytes], None] = None,
+            on_audio_data: Callable[[str, bytes, int], None] = None,
             on_message: Callable[[str, str], None] = None,
         ):
         self.peer_id = peer_id
         self.self_description = self_description
         self.pc: RTCPeerConnection | None = None
         self.tracks = tracks
-        self.sample_rate = None
         self.on_audio_data = on_audio_data
         self.on_message = on_message
         self.create_data_channel = create_data_channel
@@ -143,14 +142,13 @@ class Peer:
             try:
                 # Recieve the audio frame
                 frame = await track.recv()
-                self.sample_rate = frame.sample_rate
-
+                
                 # Extract PCM samples
                 interleaved_samples = frame.to_ndarray()[0]
                 samples = interleaved_samples[::2]
 
                 # Call callback with audio data
-                self.on_audio_data(samples)
+                self.on_audio_data(self.peer_id, samples, frame.sample_rate)
                 
             except Exception as e:
                 print(f"Error receiving audio frame: {e} - Peer id: {self.peer_id}")

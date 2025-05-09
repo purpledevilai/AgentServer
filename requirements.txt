@@ -8,3 +8,4 @@ webrtcvad==2.0.10
 scipy==1.15.2
 requests==2.32.3
 pydub==0.25.1
+deepgram-sdk==3.*
