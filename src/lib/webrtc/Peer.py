@@ -142,13 +142,13 @@ class Peer:
             try:
                 # Recieve the audio frame
                 frame = await track.recv()
-                
+
                 # Extract PCM samples
                 interleaved_samples = frame.to_ndarray()[0]
                 samples = interleaved_samples[::2]
 
                 # Call callback with audio data
-                self.on_audio_data(self.peer_id, samples, frame.sample_rate)
+                await self.on_audio_data(self.peer_id, samples, frame.sample_rate)
                 
             except Exception as e:
                 print(f"Error receiving audio frame: {e} - Peer id: {self.peer_id}")

@@ -59,7 +59,7 @@ class Room:
             return
         
         # Create a new peer
-        peer = self.on_create_peer(peer_id, self_description)
+        peer = await self.on_create_peer(peer_id, self_description)
         if not peer:
             print(f"Did not create peer for {peer_id}")
             return
@@ -99,7 +99,7 @@ class Room:
             return
         
         # Create a new peer
-        peer = self.on_create_peer(peer_id, self_description)
+        peer = await self.on_create_peer(peer_id, self_description)
         if not peer:
             print(f"Did not create peer for {peer_id}")
             return
