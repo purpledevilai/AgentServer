@@ -97,8 +97,8 @@ class ConversationOrchestrator:
             asyncio.create_task(self.speek_text_to_peers(full_sentence))
 
     async def speek_text_to_peers(self, text):
-        #wave_file = text_to_speech(text)
-        wave_file = text_to_wav_file(text)
+        wave_file = text_to_speech(text)
+        #wave_file = text_to_wav_file(text)
         for peer_id, peer in self.room.peers.items():
             await peer.tracks[0].enqueue_wav(wave_file)
         os.remove(wave_file)
