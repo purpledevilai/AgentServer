@@ -10,6 +10,8 @@ RUN apt-get update && \
     build-essential \
     gcc \
     ffmpeg \
+    espeak \
+    libespeak1 \
     git \
     && rm -rf /var/lib/apt/lists/*
 

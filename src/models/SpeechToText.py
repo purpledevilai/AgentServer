@@ -39,28 +39,32 @@ class SpeechToText:
 
 
     async def add_audio_data(self, audio_data, sample_rate):
-        # If finalizing, ignore audio data
-        if self.is_finalizing:
-            return
-        
-        # VAD
-        has_voice = vad(audio_data=audio_data, energy_threshold=self.vad_threshold)
-        #print(f"VAD: {has_voice}")
-        if has_voice:
-            if not self.speaking:
-                self.speaking = True
-                self.current_transcribe_id = f"{uuid.uuid4()}"
-            self.silence_sample_count = 0
-            await self.transcription_service.add_audio_data(self.current_transcribe_id, audio_data)
-        else:
-            if self.speaking:
+        try:
+            # If finalizing, ignore audio data
+            if self.is_finalizing:
+                return
+            
+            # VAD
+            has_voice = vad(audio_data=audio_data, energy_threshold=self.vad_threshold)
+            #print(f"VAD: {has_voice}")
+            if has_voice:
+                if not self.speaking:
+                    self.speaking = True
+                    self.current_transcribe_id = f"{uuid.uuid4()}"
+                self.silence_sample_count = 0
                 await self.transcription_service.add_audio_data(self.current_transcribe_id, audio_data)
-                self.silence_sample_count += len(audio_data)
-                silence_samples_to_wait = int((self.silence_duration_ms / 1000) * sample_rate)
-                if self.silence_sample_count >= silence_samples_to_wait:
-                    # Enough silence detected, emit the latest final transcript
-                    self.is_finalizing = True
-                    asyncio.create_task(self.finalize_transcript(sample_rate))
+            else:
+                if self.speaking:
+                    await self.transcription_service.add_audio_data(self.current_transcribe_id, audio_data)
+                    self.silence_sample_count += len(audio_data)
+                    silence_samples_to_wait = int((self.silence_duration_ms / 1000) * sample_rate)
+                    if self.silence_sample_count >= silence_samples_to_wait:
+                        # Enough silence detected, emit the latest final transcript
+                        self.is_finalizing = True
+                        asyncio.create_task(self.finalize_transcript(sample_rate))
+        except Exception as e:
+            print(f"Error durring vad: {e}")
+            raise e
                 
 
     async def finalize_transcript(self, sample_rate):

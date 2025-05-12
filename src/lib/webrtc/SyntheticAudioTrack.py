@@ -19,14 +19,18 @@ class SyntheticAudioTrack(MediaStreamTrack):
         self.lock = asyncio.Lock()
 
     async def recv(self):
-        await asyncio.sleep(0.02)
+        try:
 
-        async with self.lock:
-            if len(self.samples) >= 960 * self.channels:
-                frame_samples = [self.samples.popleft() for _ in range(960 * self.channels)]
-                frame = np.array(frame_samples, dtype=np.int16)
-            else:
-                frame = self.silence
+            await asyncio.sleep(0.02)
+
+            async with self.lock:
+                if len(self.samples) >= 960 * self.channels:
+                    frame_samples = [self.samples.popleft() for _ in range(960 * self.channels)]
+                    frame = np.array(frame_samples, dtype=np.int16)
+                else:
+                    frame = self.silence
+        except Exception as e:
+            print(f"Error in getting frame: {e}")
 
         try:
             # reshape to (1, samples) for interleaved s16 format
@@ -45,21 +49,25 @@ class SyntheticAudioTrack(MediaStreamTrack):
 
 
     async def enqueue_wav(self, wav_path):
-        # Load audio using pydub
-        audio = AudioSegment.from_wav(wav_path)
+        try:
+            # Load audio using pydub
+            audio = AudioSegment.from_wav(wav_path)
 
-        # Ensure stereo
-        if audio.channels == 1:
-            audio = audio.set_channels(2)
-        elif audio.channels != 2:
-            raise ValueError("Only mono or stereo WAV files are supported.")
+            # Ensure stereo
+            if audio.channels == 1:
+                audio = audio.set_channels(2)
+            elif audio.channels != 2:
+                raise ValueError("Only mono or stereo WAV files are supported.")
 
-        # Resample if necessary
-        if audio.frame_rate != self.sample_rate:
-            audio = audio.set_frame_rate(self.sample_rate)
+            # Resample if necessary
+            if audio.frame_rate != self.sample_rate:
+                audio = audio.set_frame_rate(self.sample_rate)
 
-        # Get raw PCM data
-        samples = np.frombuffer(audio.raw_data, dtype=np.int16)
+            # Get raw PCM data
+            samples = np.frombuffer(audio.raw_data, dtype=np.int16)
 
-        async with self.lock:
-            self.samples.extend(samples)
+            async with self.lock:
+                self.samples.extend(samples)
+        except Exception as e:
+            print(f"There was an issue enqueueing the audio file:{e}")
+            raise e

@@ -48,7 +48,8 @@ class TranscriptionService:
                 "id": id,
                 "sample_rate": sample_rate,
             },
-            await_response=True
+            await_response=True,
+            timeout=10,
         )
         return transciptionResponse.get("text", None)
 

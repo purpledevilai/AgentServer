@@ -27,22 +27,26 @@ class TokenStreamingService:
         await self._connected_event.wait()  # Wait until context_connected received
 
     async def _on_message(self, message):
-        event = json.loads(message)
+        try:
+            event = json.loads(message)
 
-        if event.get("type") == "context_connected":
-            print(f"Connected to context: {event}")
-            self._connected_event.set()
+            if event.get("type") == "context_connected":
+                print(f"Connected to context: {event}")
+                self._connected_event.set()
 
-        elif event.get("type") == "message":
-            token = event.get("message")
-            print(f"Token received: {token}")
-            self.token_queue.put_nowait(token)
+            elif event.get("type") == "message":
+                token = event.get("message")
+                print(f"Token received: {token}")
+                self.token_queue.put_nowait(token)
 
-        elif event.get("type") == "error":
-            print(f"Error: {event.get('message')}")
+            elif event.get("type") == "error":
+                print(f"Error: {event.get('message')}")
 
-        elif event.get("type") == "events":
-            print(f"Events: {event.get('events')}")
+            elif event.get("type") == "events":
+                print(f"Events: {event.get('events')}")
+        except Exception as e:
+            print(f"Error handling message in token streaming service: {e}")
+            raise e
 
     async def send_message(self, message: str):
         await self.websocket.send(json.dumps({
