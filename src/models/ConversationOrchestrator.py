@@ -11,6 +11,8 @@ from models.SpeechToText import SpeechToText
 from models.DeepgramSTT import DeepgramSTT
 from models.TokenStreamingService import TokenStreamingService
 from lib.sentence_stream import sentence_stream
+from lib.text_to_speech_stream import text_to_speech_stream
+import time
 
 
 class ConversationOrchestrator:
@@ -94,11 +96,21 @@ class ConversationOrchestrator:
     async def listen_to_token_stream(self):
         async for full_sentence in sentence_stream(self.token_streaming_service.token_stream()):
             print(f"Full Sentense: {full_sentence}")
-            asyncio.create_task(self.speek_text_to_peers(full_sentence))
+            for chunk in text_to_speech_stream(full_sentence):
+                # Send the chunk to the peers
+                for peer_id, peer in self.room.peers.items():
+                    await peer.tracks[0].enqueue_audio_samples(chunk)
+            #asyncio.create_task(self.speek_text_to_peers(full_sentence))
+
 
     async def speek_text_to_peers(self, text):
-        wave_file = text_to_speech(text)
-        #wave_file = text_to_wav_file(text)
+        start = time.time()
+        #wave_file = text_to_speech(text)
+        wave_file = text_to_wav_file(text)
+        end = time.time()
+        print(f"Text to speech took {end - start:.4f} seconds")
+        
         for peer_id, peer in self.room.peers.items():
             await peer.tracks[0].enqueue_wav(wave_file)
         os.remove(wave_file)
+

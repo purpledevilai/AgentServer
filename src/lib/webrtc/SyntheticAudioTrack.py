@@ -6,6 +6,7 @@ from pydub import AudioSegment
 from collections import deque
 import fractions
 import time
+import io
 
 class SyntheticAudioTrack(MediaStreamTrack):
     kind = "audio"
@@ -43,6 +44,13 @@ class SyntheticAudioTrack(MediaStreamTrack):
 
         self.timestamp += self.frame_size
         return audio_frame
+
+    async def enqueue_audio_samples(self, audio_samples):
+        try:
+            self.samples.extend(audio_samples)
+        except Exception as e:
+            print(f"[enqueue_audio_samples] Error: {e}")
+            raise
 
     async def enqueue_wav(self, wav_path):
         try:

@@ -36,7 +36,6 @@ class TokenStreamingService:
 
             elif event.get("type") == "message":
                 token = event.get("message")
-                print(f"Token received: {token}")
                 self.token_queue.put_nowait(token)
 
             elif event.get("type") == "error":

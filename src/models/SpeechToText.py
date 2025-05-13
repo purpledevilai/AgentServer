@@ -5,6 +5,7 @@ from typing import Optional, Callable
 from lib.vad import vad
 from lib.create_wav_from_pcm import create_wav_from_pcm
 from models.TranscriptionService import TranscriptionService
+import time
 
 class SpeechToText:
 
@@ -40,10 +41,6 @@ class SpeechToText:
 
     async def add_audio_data(self, audio_data, sample_rate):
         try:
-            # If finalizing, ignore audio data
-            if self.is_finalizing:
-                return
-            
             # VAD
             has_voice = vad(audio_data=audio_data, energy_threshold=self.vad_threshold)
             #print(f"VAD: {has_voice}")
@@ -59,27 +56,27 @@ class SpeechToText:
                     self.silence_sample_count += len(audio_data)
                     silence_samples_to_wait = int((self.silence_duration_ms / 1000) * sample_rate)
                     if self.silence_sample_count >= silence_samples_to_wait:
-                        # Enough silence detected, emit the latest final transcript
-                        self.is_finalizing = True
-                        asyncio.create_task(self.finalize_transcript(sample_rate))
+                        # Enough silence detected
+                        asyncio.create_task(self.finalize_transcript(self.current_transcribe_id, sample_rate))
+                        # Reset state
+                        self.speaking = False
+                        self.silence_sample_count = 0
+                        self.current_transcribe_id = None
         except Exception as e:
             print(f"Error durring vad: {e}")
             raise e
                 
 
-    async def finalize_transcript(self, sample_rate):
+    async def finalize_transcript(self, transcribe_id, sample_rate):
 
+        start = time.time()
         # Get transcription
-        text = await self.transcription_service.finalize_transcription(self.current_transcribe_id, sample_rate)
-
-        # Reset state
-        self.is_finalizing = False
-        self.speaking = False
-        self.silence_sample_count = 0
-        self.current_transcribe_id = None
+        text = await self.transcription_service.finalize_transcription(transcribe_id, sample_rate)
+        end = time.time()
+        print(f"Transcription time {end - start:.4f} seconds")
 
         # If the transcription is not empty and not just a thank you, send it to the callback
-        if text and text.strip() not in ("Thank you.", ".", ""):
+        if text and text.strip() not in ("Thank you.", ".", "", ".  .  .  ."):
             # Emit the final transcription
             if self.on_speech_detected:
                 self.on_speech_detected(text)
