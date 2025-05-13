@@ -95,11 +95,14 @@ class ConversationOrchestrator:
     # Listen to the token stream
     async def listen_to_token_stream(self):
         async for full_sentence in sentence_stream(self.token_streaming_service.token_stream()):
-            print(f"Full Sentense: {full_sentence}")
-            for chunk in text_to_speech_stream(full_sentence):
-                # Send the chunk to the peers
+            print(f"Full Sentence: {full_sentence}")
+
+            # Process TTS chunks as they arrive
+            async for chunk in text_to_speech_stream(full_sentence):
                 for peer_id, peer in self.room.peers.items():
                     await peer.tracks[0].enqueue_audio_samples(chunk)
+            
+            
             #asyncio.create_task(self.speek_text_to_peers(full_sentence))
 
 
