@@ -36,7 +36,7 @@ async def text_to_speech_stream(text: str):
     # Use a thread to avoid blocking the event loop with ElevenLabs call
     stream = await loop.run_in_executor(None, lambda: client.text_to_speech.convert_as_stream(
         text=text,
-        voice_id="21m00Tcm4TlvDq8ikWAM",
+        voice_id="5egO01tkUjEzu7xSSE8M", #"21m00Tcm4TlvDq8ikWAM",
         model_id="eleven_multilingual_v2",
         voice_settings=voice_settings,
         output_format="pcm_22050"
