@@ -1,9 +1,8 @@
-import copy
 import asyncio
+import os
 import uuid
 from typing import Optional, Callable
 from lib.vad import vad
-from lib.create_wav_from_pcm import create_wav_from_pcm
 from models.TranscriptionService import TranscriptionService
 import time
 
@@ -12,7 +11,7 @@ class SpeechToText:
     def __init__(
             self,
             on_speech_detected: Optional[Callable[[str], None]] = None,
-            vad_threshold: float = 0.0001,
+            vad_threshold: float = 0.001,
             silence_duration_ms: int = 1000,
         ):
         # callbacks
@@ -24,7 +23,7 @@ class SpeechToText:
 
         # Connect to Transcription service
         self.transcription_service = TranscriptionService(
-            transcription_service_url="ws://transcription-server-container:8083/ws",
+            transcription_service_url=os.environ["TRANSCRIPTION_SERVER_URL"],
         )
 
         # State variables
@@ -45,6 +44,7 @@ class SpeechToText:
             has_voice = vad(audio_data=audio_data, energy_threshold=self.vad_threshold)
             #print(f"VAD: {has_voice}")
             if has_voice:
+                print(f"Speaking...")
                 if not self.speaking:
                     self.speaking = True
                     self.current_transcribe_id = f"{uuid.uuid4()}"

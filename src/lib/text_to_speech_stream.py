@@ -1,25 +1,9 @@
 import asyncio
 import os
-
 import numpy as np
 from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings
 from scipy.signal import resample_poly
-
-def resample_pcm(pcm: np.ndarray, src_rate: int, target_rate: int) -> np.ndarray:
-    """
-    Resample a flat interleaved stereo PCM buffer.
-    """
-    # Reshape: (N frames, 2 channels)
-    frames = pcm.reshape(-1, 2)
-
-    # Resample each channel
-    left = resample_poly(frames[:, 0], target_rate, src_rate)
-    right = resample_poly(frames[:, 1], target_rate, src_rate)
-
-    # Stack and interleave
-    resampled = np.column_stack((left, right)).astype(np.int16).flatten()
-    return resampled
 
 client = ElevenLabs(api_key=os.getenv('ELEVENLABS_API_KEY'))
 

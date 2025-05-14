@@ -6,7 +6,6 @@ from pydub import AudioSegment
 from collections import deque
 import fractions
 import time
-import io
 
 class SyntheticAudioTrack(MediaStreamTrack):
     kind = "audio"

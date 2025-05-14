@@ -1,29 +1,25 @@
 import asyncio
 import os
 from typing import Optional
-from lib.text_to_speech import text_to_speech
-from lib.text_to_wav_file import text_to_wav_file
 from lib.webrtc.Room import Room
 from lib.webrtc.Peer import Peer
 from lib.webrtc.SyntheticAudioTrack import SyntheticAudioTrack
-from lib.vad import vad
 from models.SpeechToText import SpeechToText
-from models.DeepgramSTT import DeepgramSTT
 from models.TokenStreamingService import TokenStreamingService
 from lib.sentence_stream import sentence_stream
 from lib.text_to_speech_stream import text_to_speech_stream
-import time
 
 
 class ConversationOrchestrator:
 
     # Constructor
-    def __init__(self, context_id: str):
+    def __init__(self, context_id: str, allows_inturrptions: bool = False):
         self.context_id = context_id
         self.room: Optional[Room] = None
         self.token_streaming_service: Optional[TokenStreamingService] = None
         self.agent: Optional[object] = None
         self.peer_to_stt: dict[str, SpeechToText] = {}
+        self.allows_inturrptions = allows_inturrptions
     
     # Initialize
     async def initialize(self):
@@ -39,7 +35,7 @@ class ConversationOrchestrator:
 
             # Initialize and connect to agent token streaming service
             self.token_streaming_service = TokenStreamingService(
-                token_streaming_url="wss://live-agent-service.prod.live-agent.ajentify.com/ws",
+                token_streaming_url=os.environ["TOKEN_STREAMING_SERVER_URL"],
                 context_id=self.context_id,
             )
             await self.token_streaming_service.connect()
@@ -101,19 +97,6 @@ class ConversationOrchestrator:
             async for chunk in text_to_speech_stream(full_sentence):
                 for peer_id, peer in self.room.peers.items():
                     await peer.tracks[0].enqueue_audio_samples(chunk)
-            
-            
-            #asyncio.create_task(self.speek_text_to_peers(full_sentence))
 
 
-    async def speek_text_to_peers(self, text):
-        start = time.time()
-        #wave_file = text_to_speech(text)
-        wave_file = text_to_wav_file(text)
-        end = time.time()
-        print(f"Text to speech took {end - start:.4f} seconds")
-        
-        for peer_id, peer in self.room.peers.items():
-            await peer.tracks[0].enqueue_wav(wave_file)
-        os.remove(wave_file)
 
