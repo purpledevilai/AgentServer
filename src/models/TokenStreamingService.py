@@ -1,57 +1,90 @@
 import json
 import asyncio
+from lib.webrtc.JSONRPCPeer import JSONRPCPeer
 from lib.webrtc.SimpleWebSocketClient import SimpleWebSocketClient
 
 
 class TokenStreamingService:
-    def __init__(self, token_streaming_url: str, context_id: str):
+    def __init__(
+            self,
+            token_streaming_url: str,
+            context_id: str
+        ):
         self.token_streaming_url = token_streaming_url
         self.context_id = context_id
-        self.websocket = None
+        self.token_streaming_service = None
         self.token_queue: asyncio.Queue[str] = asyncio.Queue()
-        self._connected_event = asyncio.Event()
+
 
     async def connect(self):
-        self.websocket = SimpleWebSocketClient(self.token_streaming_url)
-        self.websocket.set_on_message(self._on_message)
+        # Create a WebSocket client
+        websocket = SimpleWebSocketClient(self.token_streaming_url)
 
-        await self.websocket.connect()
+        # Create RPC peer to interface with the token streaming service
+        self.token_streaming_service = JSONRPCPeer(sender=lambda msg: asyncio.create_task(websocket.send(msg)))
+
+        # Register event handlers
+        self.token_streaming_service.on("on_token", self._on_token)
+        self.token_streaming_service.on("on_tool_call", self._on_tool_call)
+        self.token_streaming_service.on("on_tool_response", self._on_tool_response)
+
+        # Set the message handler for the WebSocket
+        websocket.set_on_message(self.token_streaming_service.handle_message)
+
+        # Connect to the token streaming service
+        await websocket.connect()
         print(f"Connected to token streaming service at {self.token_streaming_url}")
 
-        await self.websocket.send(json.dumps({
-            "type": "connect_to_context",
-            "context_id": self.context_id,
-            "access_token": '',  # Assuming you'll fill this in
-        }))
+        # Send connect_to_context message
+        await self.token_streaming_service.call(
+            method="connect_to_context",
+            params={
+                "context_id": self.context_id,
+                "access_token": '',  # Assuming you'll fill this in
+            },
+            await_response=True
+        )
 
-        await self._connected_event.wait()  # Wait until context_connected received
 
-    async def _on_message(self, message):
-        try:
-            event = json.loads(message)
+    async def _on_token(self, token: str, response_id: str):
 
-            if event.get("type") == "context_connected":
-                print(f"Connected to context: {event}")
-                self._connected_event.set()
+        print(f"Token received: {token}")
+        self.token_queue.put_nowait(token)
 
-            elif event.get("type") == "message":
-                token = event.get("message")
-                self.token_queue.put_nowait(token)
+        # try:
+        #     event = json.loads(message)
 
-            elif event.get("type") == "error":
-                print(f"Error: {event.get('message')}")
+        #     if event.get("type") == "context_connected":
+        #         print(f"Connected to context: {event}")
+        #         self._connected_event.set()
 
-            elif event.get("type") == "events":
-                print(f"Events: {event.get('events')}")
-        except Exception as e:
-            print(f"Error handling message in token streaming service: {e}")
-            raise e
+        #     elif event.get("type") == "message":
+        #         token = event.get("message")
+        #         self.token_queue.put_nowait(token)
 
-    async def send_message(self, message: str):
-        await self.websocket.send(json.dumps({
-            "type": "message",
-            "message": message,
-        }))
+        #     elif event.get("type") == "error":
+        #         print(f"Error: {event.get('message')}")
+
+        #     elif event.get("type") == "events":
+        #         print(f"Events: {event.get('events')}")
+        # except Exception as e:
+        #     print(f"Error handling message in token streaming service: {e}")
+        #     raise e
+        
+
+    async def _on_tool_call(self, tool_call_id: str, tool_name: str, tool_input: str):
+        print(f"Tool call: {tool_call_id}, Tool: {tool_name}, Input: {tool_input}")
+
+    async def _on_tool_response(self, tool_call_id: str, tool_name: str, tool_output: str):
+        print(f"Tool response: {tool_call_id}, Tool: {tool_name}, Output: {tool_output}")
+
+    async def add_message(self, message: str):
+        await self.token_streaming_service.call(
+            method="add_message",
+            params={
+                "message": message,
+            }
+        )
 
     async def token_stream(self):
         """Async generator that yields tokens as they come in."""

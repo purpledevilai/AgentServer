@@ -86,7 +86,7 @@ class ConversationOrchestrator:
         print(f"Speech detected from {peer_id}: {text}")
         
         # Send the text to the token streaming service
-        asyncio.create_task(self.token_streaming_service.send_message(text))
+        asyncio.create_task(self.token_streaming_service.add_message(text))
 
     # Listen to the token stream
     async def listen_to_token_stream(self):
