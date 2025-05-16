@@ -10,23 +10,24 @@ class TranscriptionService:
         ):
         self.transcription_service_url = transcription_service_url
         self.transcription_service = None
+        self.websocket = None
         
     # Connect
     async def connect(self):
         # Create a WebSocket client
-        websocket = SimpleWebSocketClient(self.transcription_service_url)
+        self.websocket = SimpleWebSocketClient(self.transcription_service_url)
 
         # Create RPC peer to interface with the signaling server
-        self.transcription_service = JSONRPCPeer(sender=lambda msg: asyncio.create_task(websocket.send(msg)))
+        self.transcription_service = JSONRPCPeer(sender=lambda msg: asyncio.create_task(self.websocket.send(msg)))
 
         # Register signaling event handlers
         # self.transcription_service.on("live_text", self.on_live_text)
 
         # Set the message handler for the WebSocket
-        websocket.set_on_message(self.transcription_service.handle_message)
+        self.websocket.set_on_message(self.transcription_service.handle_message)
         
         # Connect to the signaling server
-        await websocket.connect()
+        await self.websocket.connect()
 
     # Add audio data
     async def add_audio_data(self, id, audio_data):
@@ -52,6 +53,11 @@ class TranscriptionService:
             timeout=10,
         )
         return transciptionResponse.get("text", None)
+
+    def close(self):
+        if self.websocket:
+            asyncio.create_task(self.websocket.close())
+            print("Closed token streaming service connection")
 
 
         

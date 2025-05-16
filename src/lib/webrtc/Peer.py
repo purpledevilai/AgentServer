@@ -161,6 +161,12 @@ class Peer:
             print(f"Sent data channel message to peer {self.peer_id}: {message}")
         else:
             print(f"Cannot send message — data channel not open - peer id: {self.peer_id}")
+
+    # Close Peer
+    def close(self):
+        if self.pc:
+            asyncio.create_task(self.pc.close())
+            self.pc = None
              
 
 

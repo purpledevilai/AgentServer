@@ -13,21 +13,24 @@ class Room:
             signaling_server_url: str,
             self_description: str,
             on_create_peer: Callable[[str, str], Peer] = None,
+            on_peer_disconnected: Callable[[str], None] = None,
         ):
         self.room_id = room_id
         self.signaling_server_url = signaling_server_url
         self.signaling_server = None
+        self.websocket = None
         self.self_description = self_description
         self.peers = {}
         self.on_create_peer = on_create_peer
+        self.on_peer_disconnected = on_peer_disconnected
         
     # Connect
     async def connect(self):
         # Create a WebSocket client
-        websocket = SimpleWebSocketClient(self.signaling_server_url)
+        self.websocket = SimpleWebSocketClient(self.signaling_server_url)
 
         # Create RPC peer to interface with the signaling server
-        self.signaling_server = JSONRPCPeer(sender=lambda msg: asyncio.create_task(websocket.send(msg)))
+        self.signaling_server = JSONRPCPeer(sender=lambda msg: asyncio.create_task(self.websocket.send(msg)))
 
         # Register signaling event handlers
         self.signaling_server.on("peer_added", self.peer_added)
@@ -35,10 +38,10 @@ class Room:
         self.signaling_server.on("add_ice_candidate", self.add_ice_candidate)
 
         # Set the message handler for the WebSocket
-        websocket.set_on_message(self.signaling_server.handle_message)
+        self.websocket.set_on_message(self.signaling_server.handle_message)
         
         # Connect to the signaling server
-        await websocket.connect()
+        await self.websocket.connect()
 
         # Call to join the room
         await self.signaling_server.call(
@@ -69,7 +72,8 @@ class Room:
             on_ice_candidate=lambda candidate: self.signaling_server.call("relay_ice_candidate", {
                 "peer_id": peer_id,
                 "candidate": candidate
-            })
+            }),
+            on_disconnected=self.on_peer_disconnected
         )
 
         # Connection exchange
@@ -109,7 +113,8 @@ class Room:
             on_ice_candidate=lambda candidate: self.signaling_server.call("relay_ice_candidate", {
                 "peer_id": peer_id,
                 "candidate": candidate
-            })
+            }),
+            on_disconnected=self.on_peer_disconnected
         )
         
         # Connection exchange
@@ -134,5 +139,23 @@ class Room:
         # Add the ICE candidate to the peer
         await self.peers[peer_id].add_ice_candidate(candidate)
 
+    def remove_peer(self, peer_id: str):
+        # Remove the peer from the list
+        if peer_id in self.peers:
+            self.peers[peer_id].close()
+            del self.peers[peer_id]
+            print(f"Removed peer {peer_id} from room")
+        else:
+            print(f"Peer {peer_id} not found in room")
 
+    def close(self):
+        if self.websocket:
+            asyncio.create_task(self.websocket.close())
+            print("Closed signaling server connection")
         
+        # Close all peers
+        for peer in self.peers.values():
+            peer.close()
+        
+        self.peers = {}
+        print("Closed all peers")

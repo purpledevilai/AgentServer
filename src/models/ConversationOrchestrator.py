@@ -30,6 +30,7 @@ class ConversationOrchestrator:
                 signaling_server_url=os.environ["SIGNALING_SERVER_URL"],
                 self_description="Agent",
                 on_create_peer=self.on_create_peer,
+                on_peer_disconnected=self.on_peer_disconnected,
             )
             await self.room.connect()
 
@@ -70,6 +71,28 @@ class ConversationOrchestrator:
         except Exception as e:
             print(f"Error creating peer {peer_id}: {e}")
             raise e
+        
+    # On Peer Disconnected - Callback used by the Room
+    def on_peer_disconnected(self, peer_id: str):
+        # Handle peer disconnection
+        print(f"Peer {peer_id} disconnected")
+        
+        # Remove the SpeechToText instance for the peer
+        if peer_id in self.peer_to_stt:
+            self.peer_to_stt[peer_id].close()
+            del self.peer_to_stt[peer_id]
+            print(f"Removed SpeechToText instance for peer {peer_id}")
+
+        # Remove peer from the room
+        self.room.remove_peer(peer_id)
+        
+        if len(self.room.peers) == 0:
+            # No more peers in the room, close the room
+            print(f"No more peers in room {self.room.room_id}, closing room")
+            self.room.close()
+            print(f"Room {self.room.room_id} closed")
+            self.token_streaming_service.close()
+            print("Closed token streaming service connection")
     
     # On Audio Data - Callback used by the Peers
     async def on_audio_data(self, peer_id, audio_data, sample_rate):

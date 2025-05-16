@@ -81,4 +81,9 @@ class SpeechToText:
             if self.on_speech_detected:
                 self.on_speech_detected(text)
 
+    def close(self):
+        # Close the transcription service connection
+        self.transcription_service.close()
+        print("Closed transcription service connection")
+
     
