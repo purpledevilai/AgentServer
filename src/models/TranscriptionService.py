@@ -40,6 +40,16 @@ class TranscriptionService:
             }
         )
 
+    # Cancel transcription
+    async def cancel_transcription(self, id):
+        # Send cancel request to the transcription service
+        await self.transcription_service.call(
+            method="cancel_transcription",
+            params={
+                "id": id,
+            }
+        )
+
     # Finalize transcription
     async def finalize_transcription(self, id, sample_rate):
         # Send finalize request to the transcription service

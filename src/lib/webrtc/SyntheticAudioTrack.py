@@ -66,3 +66,6 @@ class SyntheticAudioTrack(MediaStreamTrack):
         except Exception as e:
             print(f"[enqueue_wav] Error: {e}")
             raise
+
+    def is_speaking(self):
+        return len(self.samples) > (self.frame_size * self.channels)

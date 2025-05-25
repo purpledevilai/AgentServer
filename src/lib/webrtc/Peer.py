@@ -48,6 +48,8 @@ class Peer:
         if self.create_data_channel:
             self.data_channel = self.pc.createDataChannel("chat")
             self.data_channel.on("message", lambda msg: self.on_message(self.peer_id, msg))
+            self.data_channel.on("open", lambda: print(f"Data channel opened for Peer {self.peer_id}"))
+            self.data_channel.on("close", lambda: print(f"Data channel closed for Peer {self.peer_id}"))
             print(f"Created data channel for Peer {self.peer_id}")
 
         # Receive data channel

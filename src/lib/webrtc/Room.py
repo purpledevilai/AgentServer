@@ -20,7 +20,7 @@ class Room:
         self.signaling_server = None
         self.websocket = None
         self.self_description = self_description
-        self.peers = {}
+        self.peers: dict[str, Peer] = {}
         self.on_create_peer = on_create_peer
         self.on_peer_disconnected = on_peer_disconnected
         
