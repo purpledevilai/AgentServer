@@ -76,14 +76,24 @@ class ConversationOrchestrator:
             return Peer(
                 peer_id=peer_id,
                 self_description=self_description,
-                create_data_channel=True,
                 tracks=[audioTrack],
                 on_audio_data=self.on_audio_data, # Get data from audio stream
-                on_message=lambda peer_id, message: print("WebRTC DataChanel Message", message, peer_id), # Get data from data channel
+                on_data_channel_open=self.on_peer_data_channel_open,
             )
         except Exception as e:
             print(f"Error creating peer {peer_id}: {e}")
             raise e
+        
+    # On Peer Data Channel Open 
+    def on_peer_data_channel_open(self, peer_id: str):
+        # Send calibrating message to the peer
+        peer = self.room.peers[peer_id]
+        print(f"Data channel opened for peer {peer_id}")
+        asyncio.create_task(
+            peer.rpc_peer.call("calibration_start", {
+                "message": "Calibration started. Please speak for a few seconds."
+            })
+        )
         
     # On Peer Disconnected - Callback used by the Room
     def on_peer_disconnected(self, peer_id: str):
@@ -168,6 +178,14 @@ class ConversationOrchestrator:
         stt.update_vad_threshold(vad_threshold)
         print(f"Calibrated VAD threshold for peer {peer_id}: {vad_threshold}")
         self.has_calibrated = True
+
+        # Send calibration complete message to peer
+        peer = self.room.peers[peer_id]
+        asyncio.create_task(
+            peer.rpc_peer.call("calibration_complete", {
+                "message": "Calibration complete. You can now start speaking."
+            })
+        )
         
         
 

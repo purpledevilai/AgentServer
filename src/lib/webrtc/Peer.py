@@ -10,6 +10,7 @@ from aiortc import (
     MediaStreamTrack
 )
 from lib.webrtc.functions.parse_candidate_sdp import parse_candidate_sdp
+from lib.webrtc.JSONRPCPeer import JSONRPCPeer
 
 
 class Peer:
@@ -21,6 +22,7 @@ class Peer:
             tracks: List[MediaStreamTrack] = [],
             on_audio_data: Callable[[str, bytes, int], None] = None,
             on_message: Callable[[str, str], None] = None,
+            on_data_channel_open: Callable[[str], None] = None,
         ):
         self.peer_id = peer_id
         self.self_description = self_description
@@ -30,6 +32,8 @@ class Peer:
         self.on_message = on_message
         self.create_data_channel = create_data_channel
         self.data_channel: RTCDataChannel | None = None
+        self.rpc_peer: JSONRPCPeer | None = None
+        self.on_data_channel_open = on_data_channel_open
 
     def initialize_for_room(
             self,
@@ -47,17 +51,14 @@ class Peer:
         # Data channel setup
         if self.create_data_channel:
             self.data_channel = self.pc.createDataChannel("chat")
-            self.data_channel.on("message", lambda msg: self.on_message(self.peer_id, msg))
-            self.data_channel.on("open", lambda: print(f"Data channel opened for Peer {self.peer_id}"))
-            self.data_channel.on("close", lambda: print(f"Data channel closed for Peer {self.peer_id}"))
+            channel = self.pc.createDataChannel("chat")
+            self.setup_data_channel(channel)
             print(f"Created data channel for Peer {self.peer_id}")
 
         # Receive data channel
         @self.pc.on("datachannel")
         def on_datachannel(channel: RTCDataChannel):
-            self.data_channel = channel
-            if self.on_message:
-                self.data_channel.on("message", lambda msg: self.on_message(self.peer_id, msg))
+            self.setup_data_channel(channel)
             print(f"Received incoming data channel for Peer {self.peer_id}")
 
         # Track setup
@@ -92,6 +93,25 @@ class Peer:
             # If disconnection call the callback
             if self.pc.connectionState in ("disconnected", "failed") and on_disconnected:
                 asyncio.create_task(on_disconnected(self.peer_id))
+
+    # Setup Data Channel
+    def setup_data_channel(self, channel: RTCDataChannel):
+        self.data_channel = channel
+        self.rpc_peer = JSONRPCPeer(sender=lambda msg: self.send_message(msg))
+        channel.on("message", lambda msg: asyncio.create_task(self.rpc_peer.handle_message(msg)))
+
+        def handle_open():
+            print(f"Data channel opened for Peer {self.peer_id}")
+            if self.on_data_channel_open:
+                self.on_data_channel_open(self.peer_id)
+
+        channel.on("open", handle_open)
+
+        # Check if already open
+        if channel.readyState == "open":
+            handle_open()
+
+        channel.on("close", lambda: print(f"Data channel closed for Peer {self.peer_id}"))
 
 
     # Create Offer
