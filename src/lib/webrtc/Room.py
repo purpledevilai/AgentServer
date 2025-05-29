@@ -12,74 +12,78 @@ class Room:
             room_id: str,
             signaling_server_url: str,
             self_description: str,
-            on_create_peer: Callable[[str, str], Peer] = None,
-            on_peer_disconnected: Callable[[str], None] = None,
         ):
         self.room_id = room_id
         self.signaling_server_url = signaling_server_url
-        self.signaling_server = None
-        self.websocket = None
         self.self_description = self_description
+        self.websocket = None
+        self.rpc_layer: JSONRPCPeer = None
         self.peers: dict[str, Peer] = {}
-        self.on_create_peer = on_create_peer
-        self.on_peer_disconnected = on_peer_disconnected
+        self.on_create_peer: Callable[[str, str], Peer] = lambda peer_id, self_description: None
+        self.on_connection_status: Callable[[str], None] = lambda status: print(f"Connection status: {status}")
         
     # Connect
     async def connect(self):
         # Create a WebSocket client
         self.websocket = SimpleWebSocketClient(self.signaling_server_url)
+        self.websocket.on("connection_status", self.on_connection_status)
 
         # Create RPC peer to interface with the signaling server
-        self.signaling_server = JSONRPCPeer(sender=lambda msg: asyncio.create_task(self.websocket.send(msg)))
+        self.rpc_layer = JSONRPCPeer(sender=self.websocket.send)
 
         # Register signaling event handlers
-        self.signaling_server.on("peer_added", self.peer_added)
-        self.signaling_server.on("connection_request", self.connection_request)
-        self.signaling_server.on("add_ice_candidate", self.add_ice_candidate)
+        self.rpc_layer.on("peer_added", self.peer_added)
+        self.rpc_layer.on("connection_request", self.connection_request)
+        self.rpc_layer.on("add_ice_candidate", self.add_ice_candidate)
 
         # Set the message handler for the WebSocket
-        self.websocket.set_on_message(self.signaling_server.handle_message)
+        self.websocket.on("message", self.rpc_layer.handle_message)
         
         # Connect to the signaling server
         await self.websocket.connect()
 
         # Call to join the room
-        await self.signaling_server.call(
-            method="join",
-            params={
-                "room_id": self.room_id,
-                "self_description": self.self_description
-            }
-        )
+        await self.rpc_layer.call("join", {
+            "room_id": self.room_id,
+            "self_description": self.self_description
+        })
+
+    # Set event handlers
+    def on(self, event: str, callback: Callable):
+        if event == "create_peer":
+            self.on_create_peer = callback
+        elif event == "connection_status":
+            self.on_connection_status = callback
+        else:
+            raise ValueError(f"Unknown event: {event}")
+
+
+    ################################
+    ## SIGNALING SERVER CALLBACKS ##
+    ################################
 
     # Peer Added
     async def peer_added(self, peer_id: str, self_description: str):
         print(f"ROOM: peer was added: {peer_id} self_description: {self_description}")
         
-        # Check for handler
-        if (self.on_create_peer is None):
-            print("No handler for create_peer_for_description set")
-            return
-        
         # Create a new peer
-        peer = await self.on_create_peer(peer_id, self_description)
+        peer: Peer = await self.on_create_peer(peer_id, self_description)
         if not peer:
             print(f"Did not create peer for {peer_id}")
             return
         
         # Initialize the peer
         peer.initialize_for_room(
-            on_ice_candidate=lambda candidate: self.signaling_server.call("relay_ice_candidate", {
+            on_ice_candidate=lambda candidate: self.rpc_layer.call("relay_ice_candidate", {
                 "peer_id": peer_id,
                 "candidate": candidate
-            }),
-            on_disconnected=self.on_peer_disconnected
+            })
         )
 
         # Connection exchange
         offer = await peer.create_offer()
         print(f"Created offer for peer {peer_id} offer: {offer}")
-        answer = await self.signaling_server.call("request_connection", {
+        answer = await self.rpc_layer.call("request_connection", {
             "peer_id": peer_id,
             "self_description": self.self_description,
             "offer": offer
@@ -110,11 +114,10 @@ class Room:
         
         # Initialize the peer
         peer.initialize_for_room(
-            on_ice_candidate=lambda candidate: self.signaling_server.call("relay_ice_candidate", {
+            on_ice_candidate=lambda candidate: self.rpc_layer.call("relay_ice_candidate", {
                 "peer_id": peer_id,
                 "candidate": candidate
-            }),
-            on_disconnected=self.on_peer_disconnected
+            })
         )
         
         # Connection exchange

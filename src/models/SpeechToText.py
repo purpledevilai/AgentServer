@@ -12,21 +12,21 @@ class SpeechToText:
 
     def __init__(
             self,
-            on_speech_detected: Optional[Callable[[str], None]] = None,
+            transcription_service_url: str,
             vad_threshold: float = 0.001,
             silence_duration_ms: int = 1000,
         ):
-        # callbacks
-        self.on_speech_detected = on_speech_detected
-
         # Configuration
+        self.transcription_service_url = transcription_service_url
         self.vad_threshold = vad_threshold
         self.silence_duration_ms = silence_duration_ms
 
-        # Connect to Transcription service
-        self.transcription_service = TranscriptionService(
-            transcription_service_url=os.environ["TRANSCRIPTION_SERVER_URL"],
-        )
+        # Callbacks
+        self.on_speech_detected: Callable[[str], None] = lambda text: print(f"Speech detected: {text}")
+        self.on_connection_status: Callable[[str], None] = lambda status: print(f"Transcription Service Conneciton Status: {status}")
+
+        # Transcription service
+        self.transcription_service = None
 
         # State variables
         self.speaking = False
@@ -36,14 +36,23 @@ class SpeechToText:
         self.end_speaking_time = None
         self.vad_detections = []
 
-    def update_vad_threshold(self, vad_threshold: float):
-        self.vad_threshold = vad_threshold
-
-
-    async def connect_to_transcription_service(self):
-        # Connect to the transcription service
+    async def connect(self):
+        self.transcription_service = TranscriptionService(
+            transcription_service_url=self.transcription_service_url,
+        )
+        self.transcription_service.on("connection_status", self.on_connection_status)
         await self.transcription_service.connect()
 
+    def on(self, event: str, callback: Callable):
+        if event == "speech_detected":
+            self.on_speech_detected = callback
+        elif event == "connection_status":
+            self.on_connection_status = callback
+        else:
+            raise ValueError(f"Unknown event: {event}")
+
+    def update_vad_threshold(self, vad_threshold: float):
+        self.vad_threshold = vad_threshold
 
     async def add_audio_data(self, audio_data, sample_rate):
         try:
@@ -95,7 +104,6 @@ class SpeechToText:
                 
 
     async def finalize_transcript(self, transcribe_id, sample_rate):
-
         start = time.time()
         # Get transcription
         text = await self.transcription_service.finalize_transcription(transcribe_id, sample_rate)
@@ -106,7 +114,7 @@ class SpeechToText:
         if text and text.strip() not in ("Thank you.", ".", "", ".  .  .  ."):
             # Emit the final transcription
             if self.on_speech_detected:
-                self.on_speech_detected(text)
+                await self.on_speech_detected(text)
 
     def close(self):
         # Close the transcription service connection

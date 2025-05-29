@@ -1,5 +1,5 @@
-import json
 import asyncio
+from typing import Callable
 from lib.webrtc.JSONRPCPeer import JSONRPCPeer
 from lib.webrtc.SimpleWebSocketClient import SimpleWebSocketClient
 
@@ -8,13 +8,16 @@ class TokenStreamingService:
     def __init__(
             self,
             token_streaming_url: str,
-            context_id: str
+            context_id: str,
         ):
         self.token_streaming_url = token_streaming_url
         self.context_id = context_id
         self.websocket = None
-        self.token_streaming_service = None
-        self.token_queue: asyncio.Queue[str] = asyncio.Queue()
+        self.rpc_layer = None
+        self.on_connection_status_callback: Callable[[str], None] = lambda status: print(f"Connection status: {status}")
+        self.on_token: Callable[[str, str], None] = lambda token, response_id: print(f"Received token: {token}, Response ID: {response_id}")
+        self.on_tool_call_callback: Callable[[str, str, dict], None] = lambda call_id, tool_name, tool_input: print(f"Tool call: {call_id}, Tool: {tool_name}, Input: {tool_input}")
+        self.on_tool_response_callback: Callable[[str, str], None] = lambda call_id, response: print(f"Tool response: {call_id}, Response: {response}") 
 
 
     async def connect(self):
@@ -22,54 +25,47 @@ class TokenStreamingService:
         self.websocket = SimpleWebSocketClient(self.token_streaming_url)
 
         # Create RPC peer to interface with the token streaming service
-        self.token_streaming_service = JSONRPCPeer(sender=lambda msg: asyncio.create_task(self.websocket.send(msg)))
+        self.rpc_layer = JSONRPCPeer(sender=lambda msg: asyncio.create_task(self.websocket.send(msg)))
 
         # Register event handlers
-        self.token_streaming_service.on("on_token", self._on_token)
-        self.token_streaming_service.on("on_tool_call", self._on_tool_call)
-        self.token_streaming_service.on("on_tool_response", self._on_tool_response)
+        self.rpc_layer.on("on_token", self.on_token)
+        self.rpc_layer.on("on_tool_call", self.on_tool_call_callback)
+        self.rpc_layer.on("on_tool_response", self.on_tool_response_callback)
 
         # Set the message handler for the WebSocket
-        self.websocket.set_on_message(self.token_streaming_service.handle_message)
+        self.websocket.on("message", lambda msg: asyncio.create_task(self.rpc_layer.handle_message(msg)))
+        self.websocket.on("connection_status", self.on_connection_status_callback)
 
         # Connect to the token streaming service
         await self.websocket.connect()
         print(f"Connected to token streaming service at {self.token_streaming_url}")
 
         # Send connect_to_context message
-        await self.token_streaming_service.call(
+        await self.rpc_layer.call(
             method="connect_to_context",
             params={
                 "context_id": self.context_id,
-                "access_token": '',  # Assuming you'll fill this in
+                "access_token": '',
             },
             await_response=True
         )
 
-
-    async def _on_token(self, token: str, response_id: str):
-        self.token_queue.put_nowait(token)
-        
-
-    async def _on_tool_call(self, tool_call_id: str, tool_name: str, tool_input: str):
-        print(f"Tool call: {tool_call_id}, Tool: {tool_name}, Input: {tool_input}")
-
-    async def _on_tool_response(self, tool_call_id: str, tool_name: str, tool_output: str):
-        print(f"Tool response: {tool_call_id}, Tool: {tool_name}, Output: {tool_output}")
+    def on(self, event: str, callback: Callable):
+        if event == "token":
+            self.on_token = callback
+        elif event == "tool_call":
+            self.on_tool_call_callback = callback
+        elif event == "tool_response":
+            self.on_tool_response_callback = callback
+        elif event == "connection_status":
+            self.on_connection_status_callback = callback
+        else:
+            raise ValueError(f"Unknown event: {event}")
 
     async def add_message(self, message: str):
-        await self.token_streaming_service.call(
-            method="add_message",
-            params={
-                "message": message,
-            }
-        )
-
-    async def token_stream(self):
-        """Async generator that yields tokens as they come in."""
-        while True:
-            token = await self.token_queue.get()
-            yield token
+        await self.rpc_layer.call("add_message", {
+            "message": message,
+        })
 
     def close(self):
         if self.websocket:

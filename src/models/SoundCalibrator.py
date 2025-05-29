@@ -6,18 +6,22 @@ class SoundCalibrator:
 
     def __init__(
             self,
-            on_measurement: Callable[[float], None],
             samples_per_chunk: int = 960,
             sample_rate: int = 48000,
             calibration_duration: int = 5
         ):
         self.energy_samples = []
-        self.on_measurement = on_measurement
         self.samples_per_chunk = samples_per_chunk
         self.sample_rate = sample_rate
         self.calibration_duration = calibration_duration  # seconds
         self.clb_energy_sample_len = (sample_rate / samples_per_chunk) * calibration_duration
+        self.on_measurement: Callable[[float], None] = lambda measurement: print(f"Calibration Measurment: {measurement}")
         
+    def on(self, event: str, callback: Callable):
+        if event == "measurement":
+            self.on_measurement = callback
+        else:
+            raise ValueError(f"Unknown event: {event}")
 
     def add_audio_data(self, audio_data):
         # Calculate energy

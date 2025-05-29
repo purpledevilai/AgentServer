@@ -35,7 +35,7 @@ class JSONRPCPeer:
             "id": msg_id
         })
 
-        self.sender(message)
+        await self.sender(message)
 
         if not await_response or msg_id is None:
             return
@@ -72,13 +72,13 @@ class JSONRPCPeer:
 
             try:
                 result = await handler(**parsed_message["params"])
-                self.sender(json.dumps({
+                await self.sender(json.dumps({
                     "id": parsed_message["id"],
                     "result": result
                 }))
             except Exception as e:
                 print("Error handling message", e)
-                self.sender(json.dumps({
+                await self.sender(json.dumps({
                     "id": parsed_message["id"],
                     "result": {
                         "error": str(e)

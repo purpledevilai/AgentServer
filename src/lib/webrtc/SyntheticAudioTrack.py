@@ -44,7 +44,7 @@ class SyntheticAudioTrack(MediaStreamTrack):
         self.timestamp += self.frame_size
         return audio_frame
 
-    async def enqueue_audio_samples(self, audio_samples):
+    def enqueue_audio_samples(self, audio_samples):
         try:
             self.samples.extend(audio_samples)
         except Exception as e:
