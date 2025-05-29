@@ -1,7 +1,5 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import os
-import queue
 from typing import Optional
 from lib.webrtc.JSONRPCPeer import JSONRPCPeer
 from lib.webrtc.Room import Room
@@ -20,7 +18,6 @@ class ConversationOrchestrator:
     def __init__(self, context_id: str, allows_inturrptions: bool = False):
         self.context_id = context_id
         self.allows_inturrptions = allows_inturrptions
-        self.thread_pool = ThreadPoolExecutor()
         self.has_calibrated = False
         self.room: Optional[Room] = None
         self.token_streaming_service: Optional[TokenStreamingService] = None
@@ -81,6 +78,7 @@ class ConversationOrchestrator:
                 vad_threshold=0.001,
             )
             stt.on("connection_status", lambda status: asyncio.create_task(self.on_transcription_service_connection_status(peer_id, status)))
+            stt.on("is_speaking_status", lambda is_speaking: asyncio.create_task(self.on_is_speaking_status(peer_id, is_speaking)))
             stt.on("speech_detected", lambda text: asyncio.create_task(self.on_speach_detected(peer_id, text)))
             await stt.connect()
             self.peer_to_stt[peer_id] = stt
@@ -212,7 +210,7 @@ class ConversationOrchestrator:
 
     # On Token - When the agent receives a token from the token streaming service
     async def on_token(self, token: str, response_id: str):
-        print(f"Received token: {token}")
+        # print(f"Received token: {token}")
         await self.token_queue.put(token)
 
     # Generator to stream tokens
@@ -280,6 +278,15 @@ class ConversationOrchestrator:
         
         # Send the text to the token streaming service
         asyncio.create_task(self.token_streaming_service.add_message(text))
+
+    # On Is Speaking Status - Callback used by the SpeechToText instance
+    async def on_is_speaking_status(self, peer_id: str, is_speaking: bool):
+        print(f"Is speaking status for peer {peer_id}: {is_speaking}")
+
+        # Send is speaking status to the peer
+        await self.send_call_to_peer(peer_id, "is_speaking_status", {
+            "is_speaking": is_speaking
+        })
 
     # On transcription service connection status - Callback used by the SpeechToText instance
     async def on_transcription_service_connection_status(self, peer_id: str, status: str):

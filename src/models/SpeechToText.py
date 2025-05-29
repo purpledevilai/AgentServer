@@ -23,6 +23,7 @@ class SpeechToText:
 
         # Callbacks
         self.on_speech_detected: Callable[[str], None] = lambda text: print(f"Speech detected: {text}")
+        self.on_is_speaking_status: Callable[[bool], None] = lambda is_speaking: print(f"Is speaking: {is_speaking}")
         self.on_connection_status: Callable[[str], None] = lambda status: print(f"Transcription Service Conneciton Status: {status}")
 
         # Transcription service
@@ -46,6 +47,8 @@ class SpeechToText:
     def on(self, event: str, callback: Callable):
         if event == "speech_detected":
             self.on_speech_detected = callback
+        elif event == "is_speaking_status":
+            self.on_is_speaking_status = callback
         elif event == "connection_status":
             self.on_connection_status = callback
         else:
@@ -61,6 +64,7 @@ class SpeechToText:
             if has_voice:
                 if not self.speaking:
                     self.speaking = True
+                    await self.on_is_speaking_status(True)
                     self.current_transcribe_id = f"{uuid.uuid4()}"
                     self.start_speaking_time = time.time()
                 self.silence_sample_count = 0
@@ -88,6 +92,7 @@ class SpeechToText:
                         # Reset state
                         self.vad_detections = []
                         self.speaking = False
+                        await self.on_is_speaking_status(False)
                         self.silence_sample_count = 0
                         self.current_transcribe_id = None
                         self.start_speaking_time = None
@@ -95,7 +100,7 @@ class SpeechToText:
             
             # Add vad detection if speaking - used to 
             if self.speaking:
-                print(f"Is Speeking: {has_voice}")
+                # print(f"Is Speeking: {has_voice}")
                 self.vad_detections.append(has_voice)
 
         except Exception as e:
