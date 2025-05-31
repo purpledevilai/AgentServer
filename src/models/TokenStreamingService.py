@@ -46,8 +46,7 @@ class TokenStreamingService:
             params={
                 "context_id": self.context_id,
                 "access_token": '',
-            },
-            await_response=True
+            }
         )
 
     def on(self, event: str, callback: Callable):

@@ -26,6 +26,7 @@ class ConversationOrchestrator:
         self.peer_to_calibration: dict[str, SoundCalibrator] = {}
         self.peer_to_media_stream: dict[str, SyntheticAudioTrack] = {}
         self.peer_to_data_channel_rpc_layer: dict[str, JSONRPCPeer] = {}
+        self.sentence_counter = 0
     
 
     ##################
@@ -90,6 +91,8 @@ class ConversationOrchestrator:
 
             # SYNTHETIC AUDIO TRACK
             audioTrack = SyntheticAudioTrack()
+            audioTrack.on("is_speaking_sentence", lambda sentence_id: asyncio.create_task(self.on_is_speaking_sentence(peer_id, sentence_id)))
+            audioTrack.on("stoped_speaking", lambda: asyncio.create_task(self.on_stoped_speaking(peer_id)))
             self.peer_to_media_stream[peer_id] = audioTrack
 
             # WEBRTC PEER
@@ -222,18 +225,16 @@ class ConversationOrchestrator:
     # Speech Generator - Generates speech from the token stream and enqueues it to the media stream
     async def start_speech_generator(self):
         async for sentence in sentence_stream(self.token_stream()):
+            sentence_id = self.sentence_counter
+            self.sentence_counter += 1
             await self.send_call_to_all_peers("ai_sentence", {
                 "sentence": sentence,
+                "sentence_id": sentence_id,
             })
 
             async for pcm_data in text_to_speech_stream(sentence):
                 for synthetic_audio_track in self.peer_to_media_stream.values():
-                    synthetic_audio_track.enqueue_audio_samples(pcm_data)
-
-    # # Start Speech Generator - Starts the speech generator in a separate thread
-    # async def start_speech_generator(self):
-    #     loop = asyncio.get_running_loop()
-    #     await loop.run_in_executor(self.thread_pool, self.speech_generator)
+                    synthetic_audio_track.enqueue_audio_samples(pcm_data, sentence_id)
 
 
     # On Tool Call - When the agent calls a tool
@@ -294,6 +295,27 @@ class ConversationOrchestrator:
         await self.send_call_to_peer(peer_id, "transcription_service_connection_status", {
             "status": status
         })
+
+    
+    ###################################
+    # SYNTHETIC AUDIO TRACK CALLBACKS #
+    ###################################
+
+    # On Is Speaking Sentence - Callback used by the SyntheticAudioTrack instance
+    async def on_is_speaking_sentence(self, peer_id: str, sentence_id: int):
+        print(f"Peer {peer_id} is speaking sentence {sentence_id}")
+
+        # Send is speaking sentence to the peer
+        await self.send_call_to_peer(peer_id, "is_speaking_sentence", {
+            "sentence_id": sentence_id
+        })
+
+    # On Stoped Speaking - Callback used by the SyntheticAudioTrack instance
+    async def on_stoped_speaking(self, peer_id: str):
+        print(f"Peer {peer_id} stopped speaking")
+
+        # Send stoped speaking to the peer
+        await self.send_call_to_peer(peer_id, "stoped_speaking", {})
 
 
     #########################
