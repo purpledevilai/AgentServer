@@ -15,8 +15,9 @@ from lib.text_to_speech_stream import text_to_speech_stream
 class ConversationOrchestrator:
 
     # Constructor
-    def __init__(self, context_id: str, allows_inturrptions: bool = False):
+    def __init__(self, context_id: str, allows_inturrptions: bool = False, auth_token: Optional[str] = None):
         self.context_id = context_id
+        self.auth_token = auth_token
         self.allows_inturrptions = allows_inturrptions
         self.has_calibrated = False
         self.room: Optional[Room] = None
@@ -50,6 +51,7 @@ class ConversationOrchestrator:
             self.token_streaming_service = TokenStreamingService(
                 token_streaming_url=os.environ["TOKEN_STREAMING_SERVER_URL"],
                 context_id=self.context_id,
+                auth_token=self.auth_token,
             )
             self.token_streaming_service.on("token", self.on_token)
             self.token_streaming_service.on("tool_call", self.on_tool_call)

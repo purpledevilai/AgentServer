@@ -9,9 +9,11 @@ class TokenStreamingService:
             self,
             token_streaming_url: str,
             context_id: str,
+            auth_token: str = ''  # Optional auth token, can be empty if not required
         ):
         self.token_streaming_url = token_streaming_url
         self.context_id = context_id
+        self.auth_token = auth_token
         self.websocket = None
         self.rpc_layer = None
         self.on_connection_status_callback: Callable[[str], None] = lambda status: print(f"Connection status: {status}")
@@ -45,7 +47,7 @@ class TokenStreamingService:
             method="connect_to_context",
             params={
                 "context_id": self.context_id,
-                "access_token": '',
+                "access_token": self.auth_token,
             }
         )
 

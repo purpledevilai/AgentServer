@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+import json
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from models.ConversationOrchestrator import ConversationOrchestrator
@@ -24,13 +25,20 @@ async def health():
 class RequestAgentConnect(BaseModel):
     context_id: str
 @app.post("/invite-agent")
-async def wake_agent(request_agent_connect: RequestAgentConnect):
-
-    # Context ID from the request
+async def wake_agent(
+    request_agent_connect: RequestAgentConnect,
+    request: Request
+):
+    # Get context ID from body
     context_id = request_agent_connect.context_id
 
-    # Start conversation orchestrator
-    orchestrator = ConversationOrchestrator(context_id)
+    # Extract Authorization header
+    token = request.headers.get("Authorization")
+    print(request.headers)
+    print(f"Received token: {token}")
+
+    # You can now use `token` in your orchestrator or for authentication
+    orchestrator = ConversationOrchestrator(context_id, auth_token=token)
     await orchestrator.initialize()
     
     return {
