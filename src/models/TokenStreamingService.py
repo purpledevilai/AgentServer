@@ -43,13 +43,17 @@ class TokenStreamingService:
         print(f"Connected to token streaming service at {self.token_streaming_url}")
 
         # Send connect_to_context message
-        await self.rpc_layer.call(
+        connection_response = await self.rpc_layer.call(
             method="connect_to_context",
             params={
                 "context_id": self.context_id,
                 "access_token": self.auth_token,
-            }
+            },
+            await_response=True,
+            timeout=10
         )
+
+        return connection_response
 
     def on(self, event: str, callback: Callable):
         if event == "token":

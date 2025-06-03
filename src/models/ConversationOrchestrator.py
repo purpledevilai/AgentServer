@@ -22,6 +22,7 @@ class ConversationOrchestrator:
         self.has_calibrated = False
         self.room: Optional[Room] = None
         self.token_streaming_service: Optional[TokenStreamingService] = None
+        self.voice_id: Optional[str] = None
         self.token_queue = asyncio.Queue()
         self.peer_to_stt: dict[str, SpeechToText] = {}
         self.peer_to_calibration: dict[str, SoundCalibrator] = {}
@@ -57,7 +58,10 @@ class ConversationOrchestrator:
             self.token_streaming_service.on("tool_call", self.on_tool_call)
             self.token_streaming_service.on("tool_response", self.on_tool_response)
             self.token_streaming_service.on("connection_status", self.on_token_streaming_service_connection_status)
-            await self.token_streaming_service.connect()
+            connection_request = await self.token_streaming_service.connect()
+
+            if connection_request.get("success", False):
+                self.voice_id = connection_request["agent"]["voice_id"]
 
             # Create thread to run speech generation
             asyncio.create_task(self.start_speech_generator())
@@ -234,7 +238,7 @@ class ConversationOrchestrator:
                 "sentence_id": sentence_id,
             })
 
-            async for pcm_data in text_to_speech_stream(sentence):
+            async for pcm_data in text_to_speech_stream(sentence, voice_id=self.voice_id):
                 for synthetic_audio_track in self.peer_to_media_stream.values():
                     synthetic_audio_track.enqueue_audio_samples(pcm_data, sentence_id)
 
