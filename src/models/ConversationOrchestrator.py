@@ -244,19 +244,19 @@ class ConversationOrchestrator:
 
 
     # On Tool Call - When the agent calls a tool
-    async def on_tool_call(self, tool_id: str, tool_name: str, tool_input: dict):
-        print(f"Tool call: {tool_id}, Tool: {tool_name}, Input: {tool_input}")
+    async def on_tool_call(self, tool_call_id: str, tool_name: str, tool_input: dict):
+        print(f"Tool call: {tool_call_id}, Tool: {tool_name}, Input: {tool_input}")
         await self.send_call_to_all_peers("tool_call", {
-            "tool_id": tool_id,
+            "tool_id": tool_call_id,
             "tool_name": tool_name,
             "tool_input": tool_input,
         })
     
     # On Tool Response - When the agent receives a tool response
-    async def on_tool_response(self, tool_id: str, tool_name: str, tool_output: dict):
-        print(f"Tool response: {tool_id}, Tool: {tool_name}, Output: {tool_output}")
+    async def on_tool_response(self, tool_call_id: str, tool_name: str, tool_output: dict):
+        print(f"Tool response: {tool_call_id}, Tool: {tool_name}, Output: {tool_output}")
         await self.send_call_to_all_peers("tool_response", {
-            "tool_id": tool_id,
+            "tool_id": tool_call_id,
             "tool_name": tool_name,
             "tool_output": tool_output,
         })
