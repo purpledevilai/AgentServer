@@ -168,7 +168,7 @@ class ConversationOrchestrator:
     async def on_peer_connection_status(self, peer_id: str, status: str):
         print(f"Peer {peer_id} connection status changed: {status}")
         # If the peer is disconnected, remove it from the room
-        if status == "disconnected":
+        if status in ["disconnected", "failed", "closed"]:
             self.on_peer_disconnected(peer_id)
             return
         

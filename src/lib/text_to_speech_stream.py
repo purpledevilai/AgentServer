@@ -28,7 +28,7 @@ async def text_to_speech_stream(text: str, voice_id: str):
         voice_id=voice_id,
         model_id="eleven_multilingual_v2",
         voice_settings=voice_settings,
-        output_format="pcm_22050"
+        output_format="pcm_48000"
     ))
 
     # Now parse stream in executor too
@@ -37,8 +37,9 @@ async def text_to_speech_stream(text: str, voice_id: str):
             if not isinstance(chunk, bytes):
                 continue
             samples = np.frombuffer(chunk, dtype=np.int16)
-            resampled = resample_poly(samples, up=48000, down=22050).astype(np.int16)
-            stereo = np.column_stack((resampled, resampled)).flatten()
+            stereo = np.column_stack((samples, samples)).flatten()
+            # resampled = resample_poly(samples, up=48000, down=22050).astype(np.int16)
+            # stereo = np.column_stack((resampled, resampled)).flatten()
             yield stereo
 
     # Use executor to yield PCM chunks without blocking event loop
