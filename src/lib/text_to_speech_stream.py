@@ -17,6 +17,7 @@ async def text_to_speech_stream(text: str, voice_id: str):
         stability=0.75,
         similarity_boost=0.75,
         style=0.5,
+        speed=1,
         use_speaker_boost=True
     )
 
