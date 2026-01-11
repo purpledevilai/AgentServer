@@ -61,7 +61,7 @@ class ConversationOrchestrator:
             connection_request = await self.token_streaming_service.connect()
 
             if connection_request.get("success", False):
-                self.voice_id = connection_request["agent"]["voice_id"]
+                self.voice_id = connection_request["agent"]["voice_id"] # Connection returns the agent and we can get the voice ID
 
             # Create thread to run speech generation
             asyncio.create_task(self.start_speech_generator())
