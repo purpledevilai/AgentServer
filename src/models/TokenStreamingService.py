@@ -1,5 +1,5 @@
 import asyncio
-from typing import Callable
+from typing import Callable, Optional
 from lib.webrtc.JSONRPCPeer import JSONRPCPeer
 from lib.webrtc.SimpleWebSocketClient import SimpleWebSocketClient
 
@@ -18,6 +18,7 @@ class TokenStreamingService:
         self.rpc_layer = None
         self.on_connection_status_callback: Callable[[str], None] = lambda status: print(f"Connection status: {status}")
         self.on_token: Callable[[str, str], None] = lambda token, response_id: print(f"Received token: {token}, Response ID: {response_id}")
+        self.on_stop_token_callback: Callable[[str], None] = lambda response_id: print(f"Stop token received, Response ID: {response_id}")
         self.on_tool_call_callback: Callable[[str, str, dict], None] = lambda call_id, tool_name, tool_input: print(f"Tool call: {call_id}, Tool: {tool_name}, Input: {tool_input}")
         self.on_tool_response_callback: Callable[[str, str], None] = lambda call_id, response: print(f"Tool response: {call_id}, Response: {response}") 
 
@@ -31,6 +32,7 @@ class TokenStreamingService:
 
         # Register event handlers
         self.rpc_layer.on("on_token", self.on_token)
+        self.rpc_layer.on("on_stop_token", self.on_stop_token_callback)
         self.rpc_layer.on("on_tool_call", self.on_tool_call_callback)
         self.rpc_layer.on("on_tool_response", self.on_tool_response_callback)
 
@@ -58,6 +60,8 @@ class TokenStreamingService:
     def on(self, event: str, callback: Callable):
         if event == "token":
             self.on_token = callback
+        elif event == "stop_token":
+            self.on_stop_token_callback = callback
         elif event == "tool_call":
             self.on_tool_call_callback = callback
         elif event == "tool_response":
@@ -71,6 +75,17 @@ class TokenStreamingService:
         await self.rpc_layer.call("add_message", {
             "message": message,
         })
+
+    async def stop_invocation(self):
+        """Stop the current token generation."""
+        await self.rpc_layer.call("stop_invocation", {})
+
+    async def set_last_messages(self, human_message: str, ai_message: Optional[str] = None):
+        """Modify conversation history and re-invoke agent."""
+        params = {"human_message": human_message}
+        if ai_message is not None:
+            params["ai_message"] = ai_message
+        await self.rpc_layer.call("set_last_messages", params)
 
     def close(self):
         if self.websocket:

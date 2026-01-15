@@ -1,30 +1,50 @@
-# def first_occurrence_end(text, substrings):
-#     indices = [(text.find(sub) + len(sub)) for sub in substrings if text.find(sub) != -1]
-#     # Return the lowest index, or -1 if no match is found
-#     return min(indices) if indices else -1
-
-# async def sentence_stream(token_gen):
-#     text = ''
-#     async for token in token_gen:
-#         text += token
-#         split_index = first_occurrence_end(text, [". ", "! ", "? ", ".\n", "!\n", "?\n"])
-#         if split_index != -1:
-#             yield text[:split_index]
-#             text = text[split_index:]
-#     if text:
-#         yield text
-
 import re
-from typing import AsyncGenerator
+from typing import AsyncGenerator, TypedDict
+
+
+class TokenObject(TypedDict):
+    token: str
+    is_last: bool
+
+
+class SentenceObject(TypedDict):
+    sentence: str
+    is_last: bool
 
 
 # Regex to match sentence-ending punctuation
 SENTENCE_END_RE = re.compile(r"([.!?])([\s\n]|$)")
 
-async def sentence_stream(token_generator: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+
+async def sentence_stream(
+    token_generator: AsyncGenerator[TokenObject, None]
+) -> AsyncGenerator[SentenceObject, None]:
+    """
+    Converts a stream of token objects into a stream of sentence objects.
+    
+    Input: {token: str, is_last: bool}
+    Output: {sentence: str, is_last: bool}
+    
+    When is_last token is received, flushes any remaining buffer and then
+    yields an is_last sentence marker.
+    """
     buffer = ""
 
-    async for token in token_generator:
+    async for token_obj in token_generator:
+        token = token_obj["token"]
+        is_last = token_obj["is_last"]
+        
+        # If this is the last token marker
+        if is_last:
+            # Flush any remaining text in buffer first
+            if buffer.strip():
+                yield SentenceObject(sentence=buffer.strip(), is_last=False)
+                buffer = ""
+            # Then yield the is_last marker
+            yield SentenceObject(sentence="", is_last=True)
+            continue
+        
+        # Normal token processing
         buffer += token
 
         while True:
@@ -35,9 +55,5 @@ async def sentence_stream(token_generator: AsyncGenerator[str, None]) -> AsyncGe
             end_idx = match.end()
             sentence = buffer[:end_idx].strip()
             if sentence:
-                yield sentence
+                yield SentenceObject(sentence=sentence, is_last=False)
             buffer = buffer[end_idx:]
-
-    # Flush any remaining text at the end
-    if buffer.strip():
-        yield buffer.strip()

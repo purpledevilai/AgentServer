@@ -4,12 +4,20 @@ FROM python:3.10-slim
 # Set the working directory inside the container
 WORKDIR /app
 
-# Install necessary dependencies for webrtcvad
+# Install necessary dependencies for webrtcvad and PyAV
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     ffmpeg \
+    pkg-config \
+    libavformat-dev \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libavfilter-dev \
     espeak \
     libespeak1 \
     git \
