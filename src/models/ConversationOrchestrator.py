@@ -91,7 +91,7 @@ class ConversationOrchestrator:
             )
             stt.on("connection_status", lambda status: asyncio.create_task(self.on_transcription_service_connection_status(peer_id, status)))
             stt.on("is_speaking_status", lambda is_speaking: asyncio.create_task(self.on_is_speaking_status(peer_id, is_speaking)))
-            stt.on("speech_detected", lambda text: asyncio.create_task(self.on_speach_detected(peer_id, text)))
+            stt.on("speech_detected", lambda text: asyncio.create_task(self.on_speech_detected(peer_id, text)))
             await stt.connect()
             self.peer_to_stt[peer_id] = stt
 
@@ -296,7 +296,7 @@ class ConversationOrchestrator:
     ############################
 
     # On Speech Detected - Callback used by the SpeechToText instance
-    async def on_speach_detected(self, peer_id: str, text: str):
+    async def on_speech_detected(self, peer_id: str, text: str):
         # Handle speech detected
         print(f"Speech detected from {peer_id}: {text}")
 

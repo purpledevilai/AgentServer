@@ -4,7 +4,7 @@ FROM python:3.10-slim
 # Set the working directory inside the container
 WORKDIR /app
 
-# Install necessary dependencies for webrtcvad and PyAV
+# Install necessary dependencies for webrtcvad and PyAV (av requires pkg-config + ffmpeg dev libs to build from source)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
