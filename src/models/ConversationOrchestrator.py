@@ -346,42 +346,37 @@ class ConversationOrchestrator:
             "text": text
         })
         
+        # 1. Stop token generation (safe to call even if not generating)
+        await self.token_streaming_service.stop_invocation()
+        
+        # 2. Get completed sentences BEFORE clearing (needed for interruption reconstruction)
+        completed_ids: set[int] = set()
+        for track in self.peer_to_media_stream.values():
+            completed_ids.update(track.get_completed_sentence_ids())
+        
+        # 3. Increment invocation ID - this invalidates all in-flight generators
+        #    Any tokens/sentences from the previous invocation will be discarded
+        self.current_invocation_id += 1
+        
+        # 4. Clear all audio queues
+        for track in self.peer_to_media_stream.values():
+            track.clear_queue()
+            track.reset_completed_sentences()
+        
+        # 5. Resume audio tracks (they're now empty, safe to resume)
+        for track in self.peer_to_media_stream.values():
+            track.resume()
+        
+        # Now we have a completely clean pipe - determine what to do next
+        
         if not self.invocation_active:
-            # Normal flow - new conversation turn (no active invocation to cancel)
+            # Normal flow - new conversation turn
             self.last_human_message = text
             self.sentence_id_to_text.clear()
             self.invocation_active = True
-            
-            # Resume audio tracks (they were paused by on_is_speaking_status)
-            for track in self.peer_to_media_stream.values():
-                track.resume()
-            
             asyncio.create_task(self.token_streaming_service.add_message(text))
         else:
-            # Interruption - need to cancel current invocation and reconstruct messages
-            
-            # 1. Stop token generation
-            await self.token_streaming_service.stop_invocation()
-            
-            # 2. Get completed sentences BEFORE clearing (needed for interruption reconstruction)
-            completed_ids: set[int] = set()
-            for track in self.peer_to_media_stream.values():
-                completed_ids.update(track.get_completed_sentence_ids())
-            
-            # 3. Increment invocation ID - this invalidates all in-flight generators
-            #    Any tokens/sentences from the previous invocation will be discarded
-            self.current_invocation_id += 1
-            
-            # 4. Clear all audio queues
-            for track in self.peer_to_media_stream.values():
-                track.clear_queue()
-                track.reset_completed_sentences()
-            
-            # 5. Resume audio tracks (they're now empty, safe to resume)
-            for track in self.peer_to_media_stream.values():
-                track.resume()
-            
-            # 6. Reconstruct messages and start new invocation
+            # Interruption - reconstruct messages and start new invocation
             await self.handle_interruption_reconstruction(text, completed_ids)
 
     # On Is Speaking Status - Callback used by the SpeechToText instance
