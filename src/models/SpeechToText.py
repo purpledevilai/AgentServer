@@ -25,6 +25,7 @@ class SpeechToText:
         self.on_speech_detected: Callable[[str], None] = lambda text: print(f"Speech detected: {text}")
         self.on_is_speaking_status: Callable[[bool], None] = lambda is_speaking: print(f"Is speaking: {is_speaking}")
         self.on_connection_status: Callable[[str], None] = lambda status: print(f"Transcription Service Conneciton Status: {status}")
+        self.on_no_speech_detected: Callable[[], None] = lambda: print("No speech detected (VAD triggered but was silence/empty)")
 
         # Transcription service
         self.transcription_service = None
@@ -51,6 +52,8 @@ class SpeechToText:
             self.on_is_speaking_status = callback
         elif event == "connection_status":
             self.on_connection_status = callback
+        elif event == "no_speech_detected":
+            self.on_no_speech_detected = callback
         else:
             raise ValueError(f"Unknown event: {event}")
 
@@ -88,6 +91,8 @@ class SpeechToText:
                             print("Speaking was trigger but was mostly silence")
                             # Cancel transcription
                             await self.transcription_service.cancel_transcription(self.current_transcribe_id)
+                            # Notify that VAD triggered but no speech was detected
+                            await self.on_no_speech_detected()
                             
                         # Reset state
                         self.vad_detections = []
@@ -120,6 +125,10 @@ class SpeechToText:
             # Emit the final transcription
             if self.on_speech_detected:
                 await self.on_speech_detected(text)
+        else:
+            # Transcription was empty or filtered out - notify no speech detected
+            print(f"Transcription was empty or filtered: '{text}'")
+            await self.on_no_speech_detected()
 
     def close(self):
         # Close the transcription service connection

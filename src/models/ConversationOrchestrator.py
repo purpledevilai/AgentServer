@@ -29,10 +29,11 @@ class ConversationOrchestrator:
         self.peer_to_data_channel_rpc_layer: dict[str, JSONRPCPeer] = {}
         self.sentence_counter = 0
         
-        # Interruption state
+        # Invocation state
         self.last_human_message: Optional[str] = None    # Last text sent to token streaming
         self.sentence_id_to_text: dict[int, str] = {}    # sentence_id → text
-        self.in_interruption_window: bool = False        # True from add_message/set_last_messages until last audio played
+        self.invocation_active: bool = False             # True from add_message/set_last_messages until last audio played
+        self.current_invocation_id: int = 0              # Increments on each new invocation, used to cancel stale generators
     
 
     ##################
@@ -92,6 +93,7 @@ class ConversationOrchestrator:
             stt.on("connection_status", lambda status: asyncio.create_task(self.on_transcription_service_connection_status(peer_id, status)))
             stt.on("is_speaking_status", lambda is_speaking: asyncio.create_task(self.on_is_speaking_status(peer_id, is_speaking)))
             stt.on("speech_detected", lambda text: asyncio.create_task(self.on_speech_detected(peer_id, text)))
+            stt.on("no_speech_detected", lambda: asyncio.create_task(self.on_no_speech_detected(peer_id)))
             await stt.connect()
             self.peer_to_stt[peer_id] = stt
 
@@ -221,48 +223,88 @@ class ConversationOrchestrator:
 
     # On Token - When the agent receives a token from the token streaming service
     async def on_token(self, token: str, response_id: str):
-        # Enqueue token object with is_last=False
-        await self.token_queue.put(TokenObject(token=token, is_last=False))
+        # Enqueue token object with is_last=False, tagged with current invocation ID
+        await self.token_queue.put({
+            "token": token,
+            "is_last": False,
+            "invocation_id": self.current_invocation_id
+        })
 
     # On Stop Token - When the token streaming service has finished generating tokens
     async def on_stop_token(self, response_id: str):
         print(f"Stop token received for response: {response_id}")
-        # Enqueue is_last marker
-        await self.token_queue.put(TokenObject(token="", is_last=True))
+        # Enqueue is_last marker, tagged with current invocation ID
+        await self.token_queue.put({
+            "token": "",
+            "is_last": True,
+            "invocation_id": self.current_invocation_id
+        })
 
-    # Generator to stream token objects
-    async def token_stream(self):
+    # Generator to stream token objects, filtering by invocation ID
+    async def token_stream(self, invocation_id: int):
+        """
+        Yields tokens only if they belong to the specified invocation.
+        If a token from a NEWER invocation arrives, breaks out (allows outer loop to restart).
+        Tokens from OLDER invocations are silently discarded.
+        """
         while True:
             token_obj = await self.token_queue.get()
-            yield token_obj
+            
+            # Check if this token belongs to the expected invocation
+            token_inv_id = token_obj.get("invocation_id")
+            if token_inv_id != invocation_id:
+                if token_inv_id > invocation_id:
+                    # Newer invocation started - put token back and exit so outer loop can restart
+                    await self.token_queue.put(token_obj)
+                    return  # Exit generator, outer loop will restart with new invocation_id
+                else:
+                    # Stale token from an older invocation - discard it
+                    continue
+            
+            # Yield as TokenObject format (without invocation_id)
+            yield TokenObject(token=token_obj["token"], is_last=token_obj["is_last"])
 
     # Speech Generator - Generates speech from the token stream and enqueues it to the media stream
     async def start_speech_generator(self):
-        async for sentence_obj in sentence_stream(self.token_stream()):
-            sentence = sentence_obj["sentence"]
-            is_last = sentence_obj["is_last"]
+        while True:
+            # Capture the invocation ID at the start of each generation cycle
+            invocation_id = self.current_invocation_id
             
-            if is_last:
-                # This is the is_last marker - don't increment counter or call TTS
-                # Just enqueue the is_last marker to all tracks
-                for synthetic_audio_track in self.peer_to_media_stream.values():
-                    synthetic_audio_track.enqueue_audio_samples([], None, is_last=True)
-            else:
-                # Normal sentence processing
-                sentence_id = self.sentence_counter
-                self.sentence_counter += 1
+            async for sentence_obj in sentence_stream(self.token_stream(invocation_id)):
+                # Check if invocation has changed (interruption occurred)
+                if self.current_invocation_id != invocation_id:
+                    # Invocation changed - break out to start fresh with new invocation
+                    break
                 
-                # Store sentence text for interruption handling
-                self.sentence_id_to_text[sentence_id] = sentence
+                sentence = sentence_obj["sentence"]
+                is_last = sentence_obj["is_last"]
                 
-                await self.send_call_to_all_peers("ai_sentence", {
-                    "sentence": sentence,
-                    "sentence_id": sentence_id,
-                })
-
-                async for pcm_data in text_to_speech_stream(sentence, voice_id=self.voice_id):
+                if is_last:
+                    # This is the is_last marker - don't increment counter or call TTS
+                    # Just enqueue the is_last marker to all tracks
                     for synthetic_audio_track in self.peer_to_media_stream.values():
-                        synthetic_audio_track.enqueue_audio_samples(pcm_data, sentence_id, is_last=False)
+                        synthetic_audio_track.enqueue_audio_samples([], None, is_last=True)
+                    # Break to wait for next invocation
+                    break
+                else:
+                    # Normal sentence processing
+                    sentence_id = self.sentence_counter
+                    self.sentence_counter += 1
+                    
+                    # Store sentence text for interruption handling
+                    self.sentence_id_to_text[sentence_id] = sentence
+                    
+                    await self.send_call_to_all_peers("ai_sentence", {
+                        "sentence": sentence,
+                        "sentence_id": sentence_id,
+                    })
+
+                    async for pcm_data in text_to_speech_stream(sentence, voice_id=self.voice_id):
+                        # Check again before enqueuing each audio chunk
+                        if self.current_invocation_id != invocation_id:
+                            break
+                        for synthetic_audio_track in self.peer_to_media_stream.values():
+                            synthetic_audio_track.enqueue_audio_samples(pcm_data, sentence_id, is_last=False)
 
 
     # On Tool Call - When the agent calls a tool
@@ -297,7 +339,6 @@ class ConversationOrchestrator:
 
     # On Speech Detected - Callback used by the SpeechToText instance
     async def on_speech_detected(self, peer_id: str, text: str):
-        # Handle speech detected
         print(f"Speech detected from {peer_id}: {text}")
 
         # Send detected speech to the peer
@@ -305,17 +346,43 @@ class ConversationOrchestrator:
             "text": text
         })
         
-        if self.in_interruption_window:
-            # This is an interruption!
-            await self.handle_interruption(text)
-        else:
-            # Normal flow - new conversation turn
+        if not self.invocation_active:
+            # Normal flow - new conversation turn (no active invocation to cancel)
             self.last_human_message = text
-            self.in_interruption_window = True
             self.sentence_id_to_text.clear()
+            self.invocation_active = True
+            
+            # Resume audio tracks (they were paused by on_is_speaking_status)
             for track in self.peer_to_media_stream.values():
-                track.reset_completed_sentences()
+                track.resume()
+            
             asyncio.create_task(self.token_streaming_service.add_message(text))
+        else:
+            # Interruption - need to cancel current invocation and reconstruct messages
+            
+            # 1. Stop token generation
+            await self.token_streaming_service.stop_invocation()
+            
+            # 2. Get completed sentences BEFORE clearing (needed for interruption reconstruction)
+            completed_ids: set[int] = set()
+            for track in self.peer_to_media_stream.values():
+                completed_ids.update(track.get_completed_sentence_ids())
+            
+            # 3. Increment invocation ID - this invalidates all in-flight generators
+            #    Any tokens/sentences from the previous invocation will be discarded
+            self.current_invocation_id += 1
+            
+            # 4. Clear all audio queues
+            for track in self.peer_to_media_stream.values():
+                track.clear_queue()
+                track.reset_completed_sentences()
+            
+            # 5. Resume audio tracks (they're now empty, safe to resume)
+            for track in self.peer_to_media_stream.values():
+                track.resume()
+            
+            # 6. Reconstruct messages and start new invocation
+            await self.handle_interruption_reconstruction(text, completed_ids)
 
     # On Is Speaking Status - Callback used by the SpeechToText instance
     async def on_is_speaking_status(self, peer_id: str, is_speaking: bool):
@@ -326,12 +393,19 @@ class ConversationOrchestrator:
             "is_speaking": is_speaking
         })
         
-        # Pause/resume all audio tracks (global)
-        for track in self.peer_to_media_stream.values():
-            if is_speaking:
+        # Only pause when speaking starts - DON'T resume here
+        # Resume happens in on_speech_detected or on_no_speech_detected after we know what to do
+        if is_speaking:
+            for track in self.peer_to_media_stream.values():
                 track.pause()
-            else:
-                track.resume()
+
+    # On No Speech Detected - Called when VAD was triggered but resulted in silence/empty transcription
+    async def on_no_speech_detected(self, peer_id: str):
+        print(f"No speech detected for peer {peer_id} - resuming playback")
+        
+        # Just resume playback - the queue wasn't cleared, just paused
+        for track in self.peer_to_media_stream.values():
+            track.resume()
 
     # On transcription service connection status - Callback used by the SpeechToText instance
     async def on_transcription_service_connection_status(self, peer_id: str, status: str):
@@ -365,8 +439,8 @@ class ConversationOrchestrator:
     async def on_invocation_audio_complete(self, peer_id: str):
         print(f"Invocation audio complete for peer {peer_id}")
         
-        # Close the interruption window
-        self.in_interruption_window = False
+        # Mark invocation as no longer active
+        self.invocation_active = False
         
         # Notify peers
         await self.send_call_to_all_peers("agent_finished_speaking", {})
@@ -400,24 +474,16 @@ class ConversationOrchestrator:
     # INTERRUPTION HANDLING #
     ########################
 
-    async def handle_interruption(self, user_text: str):
-        """Handle an interruption from the user during agent speech."""
-        print(f"Handling interruption with user text: {user_text}")
+    async def handle_interruption_reconstruction(self, user_text: str, completed_ids: set[int]):
+        """
+        Handle the message reconstruction for an interruption.
+        Called after the pipe has been cleared and we need to determine what messages to send.
         
-        # 1. Stop token generation
-        await self.token_streaming_service.stop_invocation()
-        
-        # 2. Get completed sentences before clearing
-        completed_ids: set[int] = set()
-        for track in self.peer_to_media_stream.values():
-            completed_ids.update(track.get_completed_sentence_ids())
-        
-        # 3. Clear all audio queues
-        for track in self.peer_to_media_stream.values():
-            track.clear_queue()
-            track.reset_completed_sentences()
-        
-        # 4. Build AI message from completed sentences (in order)
+        Args:
+            user_text: The text the user just said
+            completed_ids: Set of sentence IDs that were fully played before the interruption
+        """
+        # 1. Build AI message from completed sentences (in order)
         ai_sentences = [
             self.sentence_id_to_text[sid]
             for sid in sorted(completed_ids)
@@ -425,7 +491,7 @@ class ConversationOrchestrator:
         ]
         ai_message = " ".join(ai_sentences) if ai_sentences else None
         
-        # 5. Build human message
+        # 2. Build human message
         if ai_message:
             # Agent said something - user_text is new input
             human_message = user_text
@@ -433,26 +499,25 @@ class ConversationOrchestrator:
             # Agent said nothing - append to previous message
             human_message = f"{self.last_human_message} {user_text}".strip()
         
-        print(f"Interruption - AI said: {ai_message}")
-        print(f"Interruption - Human message: {human_message}")
+        print(f"Interruption reconstruction - AI said: {ai_message}")
+        print(f"Interruption reconstruction - Human message: {human_message}")
         
-        # 6. Notify peers of the interruption
+        # 3. Notify peers of the interruption
         await self.send_call_to_all_peers("interruption", {
             "ai_said": ai_message,
             "human_said": human_message,
         })
         
-        # 7. Call set_last_messages (triggers new token stream)
-        # This also keeps in_interruption_window = True since new invocation is starting
+        # 4. Call set_last_messages (triggers new token stream)
         await self.token_streaming_service.set_last_messages(
             human_message=human_message,
             ai_message=ai_message
         )
         
-        # 8. Reset state for new invocation
+        # 5. Reset state for new invocation
         self.last_human_message = human_message
         self.sentence_id_to_text.clear()
-        # in_interruption_window stays True - new invocation starting
+        # invocation_active stays True - new invocation is starting
 
 
     ####################
