@@ -401,11 +401,16 @@ class ConversationOrchestrator:
 
     # On No Speech Detected - Called when VAD was triggered but resulted in silence/empty transcription
     async def on_no_speech_detected(self, peer_id: str):
-        print(f"No speech detected for peer {peer_id} - resuming playback")
+        # Check to see if any peers are still speaking
+        for track in self.peer_to_stt.values():
+            if track.speaking:
+                print(f"Peer {peer_id} is still speaking - not resuming playback")
+                return
         
-        # Just resume playback - the queue wasn't cleared, just paused
+        # Resume playback for all peers
         for track in self.peer_to_media_stream.values():
             track.resume()
+        print(f"No speech detected for peer {peer_id} - resumed playback")
 
     # On transcription service connection status - Callback used by the SpeechToText instance
     async def on_transcription_service_connection_status(self, peer_id: str, status: str):

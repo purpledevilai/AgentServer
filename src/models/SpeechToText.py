@@ -91,6 +91,8 @@ class SpeechToText:
                             print("Speaking was trigger but was mostly silence")
                             # Cancel transcription
                             await self.transcription_service.cancel_transcription(self.current_transcribe_id)
+                            # Stop speaking before calling the callback
+                            self.speaking = False
                             # Notify that VAD triggered but no speech was detected
                             await self.on_no_speech_detected()
                             
