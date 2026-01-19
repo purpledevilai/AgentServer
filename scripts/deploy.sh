@@ -36,13 +36,13 @@ done
 # === Build and Save ===
 if [ "$SKIP_BUILD" = false ]; then
   echo "Building docker image from $DOCKERFILE_NAME..."
-  docker build -f $DOCKERFILE_NAME -t $IMAGE_NAME .
+  docker build --platform linux/arm64 -f $DOCKERFILE_NAME -t $IMAGE_NAME .
 
-  echo "Saving docker image to tar..."
-  docker save $IMAGE_NAME > ${IMAGE_NAME}.tar
+  echo "Saving and compressing docker image..."
+  docker save $IMAGE_NAME | gzip > ${IMAGE_NAME}.tar.gz
 
-  echo "Copying files to server..."
-  scp -i $KEY_PATH ${IMAGE_NAME}.tar $REMOTE_USER@$SERVER_IP:~/
+  echo "Copying files to server (using rsync for reliability)..."
+  rsync -avz --progress -e "ssh -i $KEY_PATH" ${IMAGE_NAME}.tar.gz $REMOTE_USER@$SERVER_IP:~/
 fi
 
 # Always copy .env (in case it changed)
@@ -62,9 +62,9 @@ ssh -i $KEY_PATH $REMOTE_USER@$SERVER_IP << EOF
     docker rmi $IMAGE_NAME || true
     
     echo "Loading new image..."
-    docker load < ${IMAGE_NAME}.tar
+    gunzip -c ${IMAGE_NAME}.tar.gz | docker load
     echo "Cleaning up tar file..."
-    rm -f ${IMAGE_NAME}.tar
+    rm -f ${IMAGE_NAME}.tar.gz
   fi
 
   echo "Checking for SSL certificates..."
@@ -89,7 +89,7 @@ EOF
 
 # === Clean Up Local Tar (only if built) ===
 if [ "$SKIP_BUILD" = false ]; then
-  rm -f ${IMAGE_NAME}.tar
+  rm -f ${IMAGE_NAME}.tar.gz
 fi
 
 echo "🚀 Deployment complete!"
