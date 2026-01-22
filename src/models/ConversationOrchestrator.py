@@ -254,7 +254,11 @@ class ConversationOrchestrator:
             token_inv_id = token_obj.get("invocation_id")
             if token_inv_id != invocation_id:
                 if token_inv_id > invocation_id:
-                    # Newer invocation started - put token back and exit so outer loop can restart
+                    # Newer invocation started - clear any stale audio that may have been enqueued
+                    for track in self.peer_to_media_stream.values():
+                        track.clear_queue()
+                        track.reset_completed_sentences()
+                    # Put token back and exit so outer loop can restart
                     await self.token_queue.put(token_obj)
                     return  # Exit generator, outer loop will restart with new invocation_id
                 else:
@@ -363,9 +367,14 @@ class ConversationOrchestrator:
             track.clear_queue()
             track.reset_completed_sentences()
         
-        # 5. Resume audio tracks (they're now empty, safe to resume)
-        for track in self.peer_to_media_stream.values():
-            track.resume()
+        # 5. Resume audio tracks only if no one is still speaking
+        # (If someone is speaking, either on_speech_detected or on_no_speech_detected will resume later)
+        any_speaking = any(stt.speaking for stt in self.peer_to_stt.values())
+        if any_speaking:
+            print(f"A peer is still speaking - not resuming playback in on_speech_detected")
+        else:
+            for track in self.peer_to_media_stream.values():
+                track.resume()
         
         # Now we have a completely clean pipe - determine what to do next
         
