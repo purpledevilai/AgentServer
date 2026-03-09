@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # === Configuration ===
-SERVER_IP="16.26.56.194"
+SERVER_IP="16.50.102.112"
 KEY_PATH="~/keys/agent-server-key.pem"
 REMOTE_USER="ec2-user"
 
