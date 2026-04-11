@@ -29,6 +29,9 @@ class TranscriptionService:
         # Connect to the signaling server
         await self.websocket.connect()
 
+    def is_connected(self) -> bool:
+        return self.websocket is not None and self.websocket.websocket is not None
+
     # Event handler for connection status
     def on(self, event: str, callback: Callable):
         if event == "connection_status":

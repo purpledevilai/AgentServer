@@ -1,5 +1,7 @@
 import asyncio
+import json
 import os
+import urllib.request
 from typing import Optional
 from lib.webrtc.JSONRPCPeer import JSONRPCPeer
 from lib.webrtc.Room import Room
@@ -7,9 +9,13 @@ from lib.webrtc.Peer import Peer
 from lib.webrtc.SyntheticAudioTrack import SyntheticAudioTrack
 from models.SoundCalibrator import SoundCalibrator
 from models.SpeechToText import SpeechToText
+from models.TranscriptionService import TranscriptionService
 from models.TokenStreamingService import TokenStreamingService
 from lib.sentence_stream import sentence_stream, TokenObject
 from lib.text_to_speech_stream import text_to_speech_stream
+
+WAKE_RETRY_INTERVAL_S = 3
+WAKE_MAX_RETRIES = 30
 
 
 class ConversationOrchestrator:
@@ -28,6 +34,8 @@ class ConversationOrchestrator:
         self.peer_to_media_stream: dict[str, SyntheticAudioTrack] = {}
         self.peer_to_data_channel_rpc_layer: dict[str, JSONRPCPeer] = {}
         self.sentence_counter = 0
+        self.calibration_complete = asyncio.Event()
+        self._calibration_started = False
         
         # Invocation state
         self.last_human_message: Optional[str] = None    # Last text sent to token streaming
@@ -40,10 +48,9 @@ class ConversationOrchestrator:
     # INITIALIZATION #
     ##################
 
-    # Initialize
+    # Initialize - only connect to the room; everything else happens in _run_startup_sequence
     async def initialize(self):
         try:
-            # WEBRTC ROOM
             self.room = Room(
                 room_id=self.context_id,
                 signaling_server_url=os.environ["SIGNALING_SERVER_URL"],
@@ -52,8 +59,42 @@ class ConversationOrchestrator:
             self.room.on("create_peer", self.on_create_peer)
             self.room.on("connection_status", self.on_room_connection_status)
             await self.room.connect()
+        except Exception as e:
+            print(f"Error initializing ConversationOrchestrator: {e}")
+            raise e
 
-            # TOKEN STREAMING SERVICE
+
+    ######################
+    # STARTUP SEQUENCE   #
+    ######################
+
+    async def _run_startup_sequence(self, peer_id: str):
+        """Sequential startup: wake transcription -> calibrate -> connect token streaming -> ready"""
+        try:
+            # Step 1: Connect transcription service (wake if needed)
+            await self.send_call_to_peer(peer_id, "agent_status", {"status": "waking_up"})
+            transcription_service = await self._connect_transcription_service()
+
+            # Step 2: Create SpeechToText with the already-connected service
+            stt = SpeechToText(
+                transcription_service_url=os.environ["TRANSCRIPTION_SERVER_URL"],
+                silence_duration_ms=1000,
+                vad_threshold=0.001,
+                transcription_service=transcription_service,
+            )
+            stt.on("connection_status", lambda status: asyncio.create_task(self.on_transcription_service_connection_status(peer_id, status)))
+            stt.on("is_speaking_status", lambda is_speaking: asyncio.create_task(self.on_is_speaking_status(peer_id, is_speaking)))
+            stt.on("speech_detected", lambda text: asyncio.create_task(self.on_speech_detected(peer_id, text)))
+            stt.on("no_speech_detected", lambda: asyncio.create_task(self.on_no_speech_detected(peer_id)))
+            self.peer_to_stt[peer_id] = stt
+
+            # Step 3: Run calibration
+            await self.send_call_to_peer(peer_id, "agent_status", {"status": "calibrating"})
+            await self.send_call_to_peer(peer_id, "calibration_status", {"status": "started"})
+            self._calibration_started = True
+            await self.calibration_complete.wait()
+
+            # Step 4: Connect token streaming service
             self.token_streaming_service = TokenStreamingService(
                 token_streaming_url=os.environ["TOKEN_STREAMING_SERVER_URL"],
                 context_id=self.context_id,
@@ -65,15 +106,73 @@ class ConversationOrchestrator:
             self.token_streaming_service.on("tool_response", self.on_tool_response)
             self.token_streaming_service.on("connection_status", self.on_token_streaming_service_connection_status)
             connection_request = await self.token_streaming_service.connect()
-
             if connection_request.get("success", False):
-                self.voice_id = connection_request["agent"]["voice_id"] # Connection returns the agent and we can get the voice ID
+                self.voice_id = connection_request["agent"]["voice_id"]
 
-            # Create thread to run speech generation
+            # Step 5: Start speech generator and signal ready
             asyncio.create_task(self.start_speech_generator())
+            await self.send_call_to_peer(peer_id, "agent_status", {"status": "ready"})
+            print(f"Startup sequence complete for peer {peer_id}")
+
         except Exception as e:
-            print(f"Error initializing ConversationOrchestrator: {e}")
-            raise e
+            print(f"Error in startup sequence for peer {peer_id}: {e}")
+            await self.send_call_to_peer(peer_id, "agent_status", {
+                "status": "error", "message": str(e)
+            })
+
+    async def _connect_transcription_service(self) -> TranscriptionService:
+        """Try connecting to transcription service, wake it if needed."""
+        async def _noop_status(status): pass
+
+        ts = TranscriptionService(
+            transcription_service_url=os.environ["TRANSCRIPTION_SERVER_URL"]
+        )
+        ts.on("connection_status", _noop_status)
+        try:
+            await ts.connect()
+            print("Transcription service connected immediately")
+            return ts
+        except Exception as e:
+            print(f"Transcription service not available: {e}")
+
+        wake_url = os.environ.get("WAKE_ENDPOINT_URL")
+        if wake_url:
+            try:
+                result = await self._call_wake_endpoint(wake_url)
+                print(f"Wake endpoint response: {result}")
+            except Exception as e:
+                print(f"Wake endpoint call failed: {e}")
+        else:
+            print("WAKE_ENDPOINT_URL not set, will retry connection directly")
+
+        for attempt in range(1, WAKE_MAX_RETRIES + 1):
+            await asyncio.sleep(WAKE_RETRY_INTERVAL_S)
+            try:
+                ts = TranscriptionService(
+                    transcription_service_url=os.environ["TRANSCRIPTION_SERVER_URL"]
+                )
+                ts.on("connection_status", _noop_status)
+                await ts.connect()
+                print(f"Transcription service connected after {attempt} retries ({attempt * WAKE_RETRY_INTERVAL_S}s)")
+                return ts
+            except Exception:
+                print(f"Wake retry {attempt}/{WAKE_MAX_RETRIES} — transcription service not ready yet")
+
+        raise TimeoutError(
+            f"Transcription server did not become available after {WAKE_MAX_RETRIES * WAKE_RETRY_INTERVAL_S}s"
+        )
+
+    async def _call_wake_endpoint(self, wake_url: str) -> dict:
+        def _post():
+            req = urllib.request.Request(
+                wake_url,
+                data=json.dumps({"service": "transcription"}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read().decode())
+        return await asyncio.get_event_loop().run_in_executor(None, _post)
 
 
     #########################
@@ -84,19 +183,6 @@ class ConversationOrchestrator:
     async def on_create_peer(self, peer_id: str, self_description: str):
         print(f"Create Peer Called: {self_description}")
         try:
-            # SPEECH TO TEXT
-            stt =  SpeechToText(
-                transcription_service_url=os.environ["TRANSCRIPTION_SERVER_URL"],
-                silence_duration_ms=1000,
-                vad_threshold=0.001,
-            )
-            stt.on("connection_status", lambda status: asyncio.create_task(self.on_transcription_service_connection_status(peer_id, status)))
-            stt.on("is_speaking_status", lambda is_speaking: asyncio.create_task(self.on_is_speaking_status(peer_id, is_speaking)))
-            stt.on("speech_detected", lambda text: asyncio.create_task(self.on_speech_detected(peer_id, text)))
-            stt.on("no_speech_detected", lambda: asyncio.create_task(self.on_no_speech_detected(peer_id)))
-            await stt.connect()
-            self.peer_to_stt[peer_id] = stt
-
             # SOUND CALIBRATOR
             calibrator = SoundCalibrator()
             calibrator.on("measurement", lambda energy: asyncio.create_task(self.on_calibration_measurement(peer_id, energy)))
@@ -145,14 +231,14 @@ class ConversationOrchestrator:
     # On Audio Data - Audio packets received from the remote peer
     async def on_audio_data(self, peer_id, audio_data, sample_rate):
         try:
-            # Add audio data to the SpeechToText instance
-            self.peer_to_calibration[peer_id].add_audio_data(audio_data=audio_data)
+            if self._calibration_started and not self.has_calibrated:
+                self.peer_to_calibration[peer_id].add_audio_data(audio_data=audio_data)
 
-            # If not calibrated, ignore the audio data
             if not self.has_calibrated:
                 return
 
-            await self.peer_to_stt[peer_id].add_audio_data(audio_data=audio_data, sample_rate=sample_rate)
+            if peer_id in self.peer_to_stt:
+                await self.peer_to_stt[peer_id].add_audio_data(audio_data=audio_data, sample_rate=sample_rate)
         except Exception as e:
             print(f"Error processing audio data from peer {peer_id}: {e}")
             raise e
@@ -164,9 +250,7 @@ class ConversationOrchestrator:
             "status": status,
         })
         if status == "connected":
-            await self.send_call_to_peer(peer_id, "calibration_status", {
-                "status": "started",
-            })
+            asyncio.create_task(self._run_startup_sequence(peer_id))
 
     # On Peer Connection Status - When the peer's webrtc connection status changes
     async def on_peer_connection_status(self, peer_id: str, status: str):
@@ -208,12 +292,12 @@ class ConversationOrchestrator:
         self.room.remove_peer(peer_id)
         
         if len(self.room.peers) == 0:
-            # No more peers in the room, close the room
             print(f"No more peers in room {self.room.room_id}, closing room")
             self.room.close()
             print(f"Room {self.room.room_id} closed")
-            self.token_streaming_service.close()
-            print("Closed token streaming service connection")
+            if self.token_streaming_service:
+                self.token_streaming_service.close()
+                print("Closed token streaming service connection")
     
     
 
@@ -419,9 +503,6 @@ class ConversationOrchestrator:
     # On transcription service connection status - Callback used by the SpeechToText instance
     async def on_transcription_service_connection_status(self, peer_id: str, status: str):
         print(f"Transcription service connection status for peer {peer_id}: {status}")
-        await self.send_call_to_peer(peer_id, "transcription_service_connection_status", {
-            "status": status
-        })
 
     
     ###################################
@@ -461,19 +542,20 @@ class ConversationOrchestrator:
 
     # On Calibration Measurement - Callback used by the SoundCalibrator instance
     async def on_calibration_measurement(self, peer_id: str, energy: float):
-        # If already calibrated, ignore the measurement
-        if (self.has_calibrated):
+        if self.has_calibrated:
             return
         
-        # Update the VAD threshold in the SpeechToText instance
+        if peer_id not in self.peer_to_stt:
+            return
+        
         stt = self.peer_to_stt[peer_id]
         MAX_SAMPLE = 32767
         vad_threshold = (energy / (MAX_SAMPLE ** 2)) * 0.4
         stt.update_vad_threshold(vad_threshold)
         print(f"Calibrated VAD threshold for peer {peer_id}: {vad_threshold}")
         self.has_calibrated = True
+        self.calibration_complete.set()
 
-        # Send calibration complete message to peer
         await self.send_call_to_peer(peer_id, "calibration_status", {
             "status": "complete"
         })        

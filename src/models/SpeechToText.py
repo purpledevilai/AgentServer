@@ -1,5 +1,4 @@
 import asyncio
-import os
 import uuid
 from typing import Optional, Callable
 
@@ -8,6 +7,7 @@ from lib.vad import vad
 from models.TranscriptionService import TranscriptionService
 import time
 
+
 class SpeechToText:
 
     def __init__(
@@ -15,8 +15,8 @@ class SpeechToText:
             transcription_service_url: str,
             vad_threshold: float = 0.001,
             silence_duration_ms: int = 1000,
+            transcription_service: Optional[TranscriptionService] = None,
         ):
-        # Configuration
         self.transcription_service_url = transcription_service_url
         self.vad_threshold = vad_threshold
         self.silence_duration_ms = silence_duration_ms
@@ -24,11 +24,11 @@ class SpeechToText:
         # Callbacks
         self.on_speech_detected: Callable[[str], None] = lambda text: print(f"Speech detected: {text}")
         self.on_is_speaking_status: Callable[[bool], None] = lambda is_speaking: print(f"Is speaking: {is_speaking}")
-        self.on_connection_status: Callable[[str], None] = lambda status: print(f"Transcription Service Conneciton Status: {status}")
+        self.on_connection_status: Callable[[str], None] = lambda status: print(f"Transcription Service Connection Status: {status}")
         self.on_no_speech_detected: Callable[[], None] = lambda: print("No speech detected (VAD triggered but was silence/empty)")
 
-        # Transcription service
-        self.transcription_service = None
+        # Pre-connected service passed from orchestrator, or None
+        self.transcription_service = transcription_service
 
         # State variables
         self.speaking = False
@@ -37,13 +37,6 @@ class SpeechToText:
         self.start_speaking_time = None
         self.end_speaking_time = None
         self.vad_detections = []
-
-    async def connect(self):
-        self.transcription_service = TranscriptionService(
-            transcription_service_url=self.transcription_service_url,
-        )
-        self.transcription_service.on("connection_status", self.on_connection_status)
-        await self.transcription_service.connect()
 
     def on(self, event: str, callback: Callable):
         if event == "speech_detected":
@@ -61,6 +54,8 @@ class SpeechToText:
         self.vad_threshold = vad_threshold
 
     async def add_audio_data(self, audio_data, sample_rate):
+        if not self.transcription_service or not self.transcription_service.is_connected():
+            return
         try:
             # VAD
             has_voice = vad(audio_data=audio_data, energy_threshold=self.vad_threshold)
