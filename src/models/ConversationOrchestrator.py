@@ -78,8 +78,8 @@ class ConversationOrchestrator:
             # Step 2: Create SpeechToText with the already-connected service
             stt = SpeechToText(
                 transcription_service_url=os.environ["TRANSCRIPTION_SERVER_URL"],
-                silence_duration_ms=1000,
-                vad_threshold=0.001,
+                silence_duration_ms=750,
+                vad_threshold=0.01,
                 transcription_service=transcription_service,
             )
             stt.on("connection_status", lambda status: asyncio.create_task(self.on_transcription_service_connection_status(peer_id, status)))
